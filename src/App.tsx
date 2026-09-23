@@ -31,8 +31,21 @@ import {
   Wifi,
   Database,
   Eye,
-  Settings
+  Settings,
+  Box,
+  Maximize2,
+  Minimize2,
+  Sun,
+  Moon,
+  Volume2,
+  VolumeX,
+  Wrench,
+  HelpCircle,
+  Sparkles,
+  TrendingUp,
+  Filter
 } from 'lucide-react';
+import { Pump3DSimulator } from './components/Pump3DSimulator';
 
 export type ScenarioType =
   | 'NORMAL'
@@ -40,15 +53,6 @@ export type ScenarioType =
   | 'DRY_RUN'
   | 'BLOCKAGE'
   | 'ELECTRICAL_FAULT';
-
-interface SensorMetric {
-  value: number;
-  normalRange: [number, number];
-  warnThreshold: number | [number, number];
-  unit: string;
-  history: number[];
-  status: 'normal' | 'warning' | 'critical';
-}
 
 interface AlertLog {
   id: string;
@@ -58,7 +62,67 @@ interface AlertLog {
   recommendation: string;
 }
 
+const SCENARIO_GUIDES: Record<
+  ScenarioType,
+  { title: string; summary: string; expected: string; maintenance: string }
+> = {
+  NORMAL: {
+    title: 'Normal Continuous Operation',
+    summary:
+      'Pump operates at rated Best Efficiency Point (BEP). All mechanical, electrical, and hydraulic parameters are within ISO 10816 Zone A/B.',
+    expected:
+      'Vibration ~2.8 mm/s · Temperature ~48.5°C · Current ~6.4A · Pressure ~3.2 bar · Flow ~128 L/min',
+    maintenance:
+      'Routine inspection every 90 days. Check oil level in bearing pedestal sight glass.'
+  },
+  BEARING_WEAR: {
+    title: 'Progressive Bearing Degradation',
+    summary:
+      'Simulates raceway fatigue spalling over 30 seconds. Friction creates high-frequency micro-vibration and localized thermal build-up.',
+    expected:
+      'Vibration ramps from 2.8 to 9.4 mm/s · Temperature rises from 48.5°C to 78°C · RUL drops to 6 days.',
+    maintenance:
+      'ISO 10816 Zone D alarm tripped. Schedule urgent SKF deep-groove ball bearing replacement.'
+  },
+  DRY_RUN: {
+    title: 'Dry Run / Loss of Prime (5s Auto-Trip)',
+    summary:
+      'Suction water drops to zero. Mechanical seal runs dry. The automated safety system detects flow collapse and triggers emergency trip.',
+    expected:
+      'Flow collapses to 0 L/min · Pressure drops to 0.4 bar · Current spikes · Automatic shutdown trips in 5s.',
+    maintenance:
+      'Safety interlock engaged. Inspect suction foot valve, vent air from casing priming port before restarting.'
+  },
+  BLOCKAGE: {
+    title: 'Suction Line Blockage / Cavitation',
+    summary:
+      'Inlet strainer obstructed. Net Positive Suction Head Required (NPSHr) exceeds available NPSH, causing vapor bubble cavitation.',
+    expected:
+      'Discharge pressure spikes to 5.8 bar · Flow throttled to 42 L/min · High motor load current ~9.1A.',
+    maintenance:
+      'Clean suction basket filter, check inlet butterfly valve position, verify suction head level.'
+  },
+  ELECTRICAL_FAULT: {
+    title: 'Motor Phase Voltage Imbalance',
+    summary:
+      'Simulates supply voltage unbalance causing negative sequence currents and stator winding thermal stress.',
+    expected:
+      'Motor current surges erratically (6.4A to 14.8A) · Motor housing heats up · RPM fluctuates.',
+    maintenance:
+      'Check motor starter contactor, verify 3-phase line voltages within 2% balance standard.'
+  }
+};
+
 export default function App() {
+  // --- Theme Mode ---
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+
+  // --- Audio Sound Synthesizer ---
+  const [audioEnabled, setAudioEnabled] = useState<boolean>(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const motorOscRef = useRef<OscillatorNode | null>(null);
+  const motorGainRef = useRef<GainNode | null>(null);
+
   // --- Simulation Controls ---
   const [isPlaying, setIsPlaying] = useState<boolean>(true);
   const [simSpeed, setSimSpeed] = useState<number>(1); // 1x, 2x, 4x
@@ -67,15 +131,28 @@ export default function App() {
   const [isAutoShutdown, setIsAutoShutdown] = useState<boolean>(false);
   const [dryRunTimer, setDryRunTimer] = useState<number>(0);
 
+  // --- 3D Digital Twin View State ---
+  const [pumpViewMode, setPumpViewMode] = useState<'3d' | '2d'>('3d');
+  const [is3DExpanded, setIs3DExpanded] = useState<boolean>(false);
+  const [showManualTuning, setShowManualTuning] = useState<boolean>(false);
+
+  // --- Manual Tuning Overrides ---
+  const [rpmManualOffset, setRpmManualOffset] = useState<number>(0);
+  const [throttleValvePct, setThrottleValvePct] = useState<number>(100);
+
   // --- Historical Chart Selection ---
-  const [selectedChartMetric, setSelectedChartMetric] = useState<'vibration' | 'temperature' | 'current' | 'pressure' | 'flow' | 'all'>('vibration');
+  const [selectedChartMetric, setSelectedChartMetric] = useState<
+    'vibration' | 'temperature' | 'current' | 'pressure' | 'flow'
+  >('vibration');
 
   // --- Collapsible Sections ---
   const [showTechSpecs, setShowTechSpecs] = useState<boolean>(false);
+  const [showScenarioGuide, setShowScenarioGuide] = useState<boolean>(true);
   const [hoveredArchNode, setHoveredArchNode] = useState<string | null>(null);
   const [selectedArchNode, setSelectedArchNode] = useState<string | null>(null);
   const [showExportModal, setShowExportModal] = useState<boolean>(false);
   const [copiedCode, setCopiedCode] = useState<boolean>(false);
+  const [alertFilter, setAlertFilter] = useState<'all' | 'critical' | 'warning'>('all');
 
   // --- Live Sensor Readings ---
   const [vibration, setVibration] = useState<number>(2.8); // mm/s
@@ -97,155 +174,326 @@ export default function App() {
       id: 'init-1',
       timestamp: new Date().toLocaleTimeString(),
       severity: 'info',
-      title: 'Telemetry Initialized',
-      recommendation: 'ESP32 Edge Gateway online. Sampling at 10 kHz with TinyML model v2.1.'
+      title: 'Telemetry Stream Initialized',
+      recommendation:
+        'ESP32 Edge Gateway online. ISO 10816 vibration classifier active. Digital twin model synced.'
     },
     {
       id: 'init-2',
       timestamp: new Date().toLocaleTimeString(),
       severity: 'info',
-      title: 'Digital Twin Synchronized',
-      recommendation: 'Physics model calibrated. Estimated baseline RUL is 142 operating days.'
+      title: 'Automated Safety System Armed',
+      recommendation:
+        'Centrifugal pump protection relays active. Sub-50ms dry-run auto-shutdown monitoring armed.'
     }
   ]);
+
   const alertEndRef = useRef<HTMLDivElement>(null);
 
-  const addAlert = (severity: 'info' | 'warning' | 'critical', title: string, recommendation: string) => {
-    const newAlert: AlertLog = {
-      id: Math.random().toString(36).substring(2, 9),
-      timestamp: new Date().toLocaleTimeString(),
-      severity,
-      title,
-      recommendation
-    };
-    setAlerts((prev) => [...prev.slice(-40), newAlert]);
+  // --- Audio Engine Setup ---
+  const initAudioEngine = () => {
+    try {
+      if (!audioCtxRef.current) {
+        const AudioContextClass =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        if (AudioContextClass) {
+          audioCtxRef.current = new AudioContextClass();
+        }
+      }
+      if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+      if (audioCtxRef.current && !motorOscRef.current) {
+        const osc = audioCtxRef.current.createOscillator();
+        const gain = audioCtxRef.current.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(55, audioCtxRef.current.currentTime);
+        gain.gain.setValueAtTime(0, audioCtxRef.current.currentTime);
+        osc.connect(gain);
+        gain.connect(audioCtxRef.current.destination);
+        osc.start();
+        motorOscRef.current = osc;
+        motorGainRef.current = gain;
+      }
+    } catch {
+      // Audio autoplay policy fallback
+    }
   };
 
-  // --- Scenario Trigger Handler ---
+  const toggleAudio = () => {
+    const next = !audioEnabled;
+    setAudioEnabled(next);
+    if (next) {
+      initAudioEngine();
+    } else if (motorGainRef.current && audioCtxRef.current) {
+      motorGainRef.current.gain.setValueAtTime(0, audioCtxRef.current.currentTime);
+    }
+  };
+
+  const playChime = (freq = 880, dur = 0.3) => {
+    if (!audioEnabled || !audioCtxRef.current) return;
+    try {
+      const osc = audioCtxRef.current.createOscillator();
+      const g = audioCtxRef.current.createGain();
+      osc.frequency.setValueAtTime(freq, audioCtxRef.current.currentTime);
+      g.gain.setValueAtTime(0.08, audioCtxRef.current.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, audioCtxRef.current.currentTime + dur);
+      osc.connect(g);
+      g.connect(audioCtxRef.current.destination);
+      osc.start();
+      osc.stop(audioCtxRef.current.currentTime + dur);
+    } catch {
+      // Fallback
+    }
+  };
+
+  // --- Calculated Motor RPM ---
+  const motorRPM = useMemo(() => {
+    if (isAutoShutdown) return 0;
+    let base = 1450;
+    if (activeScenario === 'NORMAL') base = 1450;
+    else if (activeScenario === 'BEARING_WEAR') base = 1410;
+    else if (activeScenario === 'BLOCKAGE') base = 1475;
+    else if (activeScenario === 'DRY_RUN') base = 1520;
+    else if (activeScenario === 'ELECTRICAL_FAULT')
+      base = 1380 + Math.sin(scenarioElapsed * 3) * 120;
+
+    return Math.max(0, Math.min(1850, Math.round(base + rpmManualOffset)));
+  }, [isAutoShutdown, activeScenario, scenarioElapsed, rpmManualOffset]);
+
+  // Update Audio Drone
+  useEffect(() => {
+    if (!audioEnabled || !motorOscRef.current || !motorGainRef.current || !audioCtxRef.current)
+      return;
+    if (isAutoShutdown || motorRPM === 0) {
+      motorGainRef.current.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.1);
+    } else {
+      const freq = 50 + (motorRPM / 1450) * 35;
+      motorOscRef.current.frequency.setTargetAtTime(freq, audioCtxRef.current.currentTime, 0.1);
+      const targetGain = Math.min(0.045, 0.02 + (vibration / 12) * 0.02);
+      motorGainRef.current.gain.setTargetAtTime(targetGain, audioCtxRef.current.currentTime, 0.1);
+    }
+  }, [audioEnabled, motorRPM, isAutoShutdown, vibration]);
+
+  // Switch Scenario Handler
   const switchScenario = (scenario: ScenarioType) => {
     setActiveScenario(scenario);
     setScenarioElapsed(0);
-    setIsAutoShutdown(false);
     setDryRunTimer(0);
+    setIsAutoShutdown(false);
 
+    const now = new Date().toLocaleTimeString();
     if (scenario === 'NORMAL') {
-      addAlert('info', 'Normal Mode Activated', 'System restored to baseline conditions. All metrics nominal.');
+      playChime(660, 0.2);
+      setAlerts((prev) => [
+        ...prev,
+        {
+          id: `alert-${Date.now()}`,
+          timestamp: now,
+          severity: 'info',
+          title: 'Normal Operating Mode Engaged',
+          recommendation: 'Baseline calibration restored. All 5 telemetry channels nominal.'
+        }
+      ]);
     } else if (scenario === 'BEARING_WEAR') {
-      addAlert('warning', 'Bearing Wear Injected', 'Simulating gradual sub-surface raceway spalling. Vibration ramping over 30s.');
+      playChime(520, 0.3);
+      setAlerts((prev) => [
+        ...prev,
+        {
+          id: `alert-${Date.now()}`,
+          timestamp: now,
+          severity: 'warning',
+          title: 'Bearing Wear Fault Injected',
+          recommendation:
+            'Simulating 30-second progressive raceway spalling. Watch ADXL345 vibration & PT100 temperature climb.'
+        }
+      ]);
     } else if (scenario === 'DRY_RUN') {
-      addAlert('critical', 'Dry Run Simulation Initiated', 'Suction supply cut. Flow dropping to zero. Auto-shutdown watch active (5s limit).');
+      playChime(440, 0.4);
+      setAlerts((prev) => [
+        ...prev,
+        {
+          id: `alert-${Date.now()}`,
+          timestamp: now,
+          severity: 'critical',
+          title: 'Dry Run Hazard Injected',
+          recommendation:
+            'Suction fluid flow dropped to 0 L/min. Automated safety system countdown initiated (5s auto-shutdown).'
+        }
+      ]);
     } else if (scenario === 'BLOCKAGE') {
-      addAlert('warning', 'Discharge Blockage Injected', 'Discharge valve throttling simulated. Head pressure increasing, flow throttled.');
+      playChime(580, 0.25);
+      setAlerts((prev) => [
+        ...prev,
+        {
+          id: `alert-${Date.now()}`,
+          timestamp: now,
+          severity: 'warning',
+          title: 'Suction Blockage Simulated',
+          recommendation:
+            'Inlet strainer restricted. Pressure head increasing; flow rate severely throttled.'
+        }
+      ]);
     } else if (scenario === 'ELECTRICAL_FAULT') {
-      addAlert('critical', 'Electrical Fault Injected', 'Simulating winding insulation breakdown & phase current imbalance.');
+      playChime(480, 0.3);
+      setAlerts((prev) => [
+        ...prev,
+        {
+          id: `alert-${Date.now()}`,
+          timestamp: now,
+          severity: 'critical',
+          title: 'Motor Phase Imbalance Injected',
+          recommendation:
+            '3-phase current spikes detected. Stator thermal overload warning flagged.'
+        }
+      ]);
     }
   };
 
-  // --- Real-time Simulation Engine ---
+  // --- Real-time Simulation Engine Loop ---
   useEffect(() => {
     if (!isPlaying) return;
 
-    const baseInterval = 1000 / simSpeed;
     const interval = setInterval(() => {
       setScenarioElapsed((prev) => prev + 1);
 
-      // 1. If Auto-Shutdown has occurred (from Dry Run or manual trip)
+      // 1. Calculate values based on scenario
+      let nextVib = vibration;
+      let nextTemp = temperature;
+      let nextCurr = current;
+      let nextPress = pressure;
+      let nextFlow = flowRate;
+
+      const throttleMult = throttleValvePct / 100;
+
       if (isAutoShutdown) {
-        setVibration((v) => Math.max(0.1, Number((v * 0.7).toFixed(2))));
-        setFlowRate(0);
-        setPressure((p) => Math.max(0.2, Number((p * 0.8).toFixed(2))));
-        setCurrent(0);
-        setTemperature((t) => Math.max(32, Number((t - 0.4).toFixed(1))));
-        return;
-      }
+        // Shutdown state
+        nextVib = Math.max(0.1, Number((vibration * 0.75).toFixed(2)));
+        nextTemp = Math.max(32, Number((temperature - 0.4).toFixed(1)));
+        nextCurr = 0.0;
+        nextPress = 0.0;
+        nextFlow = 0;
+      } else {
+        if (activeScenario === 'NORMAL') {
+          nextVib = Number((2.8 + (Math.random() * 0.4 - 0.2)).toFixed(2));
+          nextTemp = Number((48.5 + (Math.random() * 0.6 - 0.3)).toFixed(1));
+          nextCurr = Number((6.4 + (Math.random() * 0.3 - 0.15)).toFixed(2));
+          nextPress = Number((3.2 * throttleMult + (Math.random() * 0.2 - 0.1)).toFixed(2));
+          nextFlow = Math.round((128 + (Math.random() * 6 - 3)) * throttleMult);
+        } else if (activeScenario === 'BEARING_WEAR') {
+          // 30-sec progressive degradation ramp
+          const progress = Math.min(1, scenarioElapsed / 30);
+          nextVib = Number((2.8 + progress * 6.6 + (Math.random() * 0.4 - 0.2)).toFixed(2));
+          nextTemp = Number((48.5 + progress * 29.5 + (Math.random() * 0.6 - 0.3)).toFixed(1));
+          nextCurr = Number((6.4 + progress * 2.8 + (Math.random() * 0.3 - 0.15)).toFixed(2));
+          nextPress = Number((3.2 * throttleMult + (Math.random() * 0.3 - 0.15)).toFixed(2));
+          nextFlow = Math.max(70, Math.round((128 - progress * 40) * throttleMult));
 
-      // 2. Scenario-specific state evolution
-      if (activeScenario === 'NORMAL') {
-        // Subtle realistic noise
-        setVibration(Number((2.8 + (Math.random() * 0.4 - 0.2)).toFixed(2)));
-        setTemperature(Number((48.5 + (Math.random() * 0.8 - 0.4)).toFixed(1)));
-        setCurrent(Number((6.4 + (Math.random() * 0.3 - 0.15)).toFixed(2)));
-        setPressure(Number((3.2 + (Math.random() * 0.2 - 0.1)).toFixed(2)));
-        setFlowRate(Math.round(128 + (Math.random() * 6 - 3)));
-      } else if (activeScenario === 'BEARING_WEAR') {
-        // Gradually ramps over ~30 seconds
-        const progress = Math.min(1, scenarioElapsed / 30);
-        const targetVib = 2.8 + progress * 6.8; // up to 9.6 mm/s (Critical)
-        const targetTemp = 48.5 + progress * 32.0; // up to 80.5 °C (Critical)
-        const targetCurr = 6.4 + progress * 2.8; // up to 9.2 A (Warning)
-
-        setVibration(Number((targetVib + (Math.random() * 0.3 - 0.15)).toFixed(2)));
-        setTemperature(Number((targetTemp + (Math.random() * 0.4 - 0.2)).toFixed(1)));
-        setCurrent(Number((targetCurr + (Math.random() * 0.2 - 0.1)).toFixed(2)));
-        setPressure(Number((3.1 + (Math.random() * 0.2 - 0.1)).toFixed(2)));
-        setFlowRate(Math.round(124 + (Math.random() * 6 - 3)));
-
-        if (scenarioElapsed === 15) {
-          addAlert('warning', 'High Frequency Harmonics Detected', 'FFT peak detected at BPFO (Outer Race defect frequency). Schedule inspection.');
-        }
-        if (scenarioElapsed === 28) {
-          addAlert('critical', 'Severe Mechanical Degradation', 'Vibration exceeding ISO 10816-3 Zone D (>7.1 mm/s). Immediate shutdown recommended.');
-        }
-      } else if (activeScenario === 'DRY_RUN') {
-        // Immediate flow loss & cavitation, rapid thermal ramp, 5-second shutdown
-        setFlowRate(0);
-        setPressure((p) => Math.max(0.3, Number((p * 0.5).toFixed(2))));
-        setCurrent(Number((12.8 + (Math.random() * 1.2 - 0.6)).toFixed(2))); // motor current surge from loss of fluid resistance & friction
-        setTemperature((t) => Number((t + 4.2).toFixed(1))); // fast thermal spike
-        setVibration(Number((7.8 + (Math.random() * 1.5 - 0.75)).toFixed(2)));
-
-        setDryRunTimer((t) => {
-          const next = t + 1;
-          if (next >= 5 && !isAutoShutdown) {
-            setIsAutoShutdown(true);
-            addAlert('critical', 'DRY RUN EMERGENCY TRIP ACTIVATED', 'Auto-shutdown relay energized after 5s dry run threshold. Pump motor de-energized.');
+          // Log alert when crossing critical threshold
+          if (nextVib >= 4.0 && vibration < 4.0) {
+            playChime(580, 0.3);
+            setAlerts((prev) => [
+              ...prev,
+              {
+                id: `vib-warn-${Date.now()}`,
+                timestamp: new Date().toLocaleTimeString(),
+                severity: 'warning',
+                title: 'ISO 10816 Zone C Warning',
+                recommendation:
+                  'Vibration velocity exceeded 4.0 mm/s. Bearing lubrication required.'
+              }
+            ]);
+          } else if (nextVib >= 8.0 && vibration < 8.0) {
+            playChime(880, 0.5);
+            setAlerts((prev) => [
+              ...prev,
+              {
+                id: `vib-crit-${Date.now()}`,
+                timestamp: new Date().toLocaleTimeString(),
+                severity: 'critical',
+                title: 'ISO 10816 Zone D Danger Threshold',
+                recommendation:
+                  'Vibration velocity > 8.0 mm/s. Catastrophic bearing failure imminent. Stop pump.'
+              }
+            ]);
           }
-          return next;
-        });
-      } else if (activeScenario === 'BLOCKAGE') {
-        // Discharge pressure increases, flow drops, current fluctuates
-        setPressure(Number((5.8 + (Math.random() * 0.3 - 0.15)).toFixed(2))); // > 5 bar Warning
-        setFlowRate(Math.round(38 + (Math.random() * 8 - 4))); // < 80 L/min Warning
-        setCurrent(Number((8.9 + (Math.random() * 0.8 - 0.4)).toFixed(2))); // higher current
-        setTemperature((t) => Math.min(68, Number((t + 0.6).toFixed(1))));
-        setVibration(Number((4.8 + (Math.random() * 0.6 - 0.3)).toFixed(2)));
+        } else if (activeScenario === 'DRY_RUN') {
+          // Flow collapses to 0, pressure drops, motor runs hot
+          nextFlow = 0;
+          nextPress = 0.4;
+          nextCurr = Number((12.8 + (Math.random() * 0.8 - 0.4)).toFixed(2));
+          nextTemp = Number((temperature + 1.2).toFixed(1));
+          nextVib = Number((4.5 + (Math.random() * 0.6 - 0.3)).toFixed(2));
 
-        if (scenarioElapsed === 10) {
-          addAlert('warning', 'Discharge Over-Pressure Detected', 'System operating near shutoff head. Check intake strainer and discharge butterfly valve.');
-        }
-      } else if (activeScenario === 'ELECTRICAL_FAULT') {
-        // Current spikes erratically, voltage fluctuations, electromagnetic vibration
-        const spike = Math.random() > 0.4 ? 14.5 + Math.random() * 3.0 : 6.8;
-        setCurrent(Number(spike.toFixed(2)));
-        setVibration(Number((5.6 + (Math.random() * 1.8 - 0.9)).toFixed(2)));
-        setTemperature((t) => Math.min(76, Number((t + 0.8).toFixed(1))));
-        setPressure(Number((2.9 + (Math.random() * 0.4 - 0.2)).toFixed(2)));
-        setFlowRate(Math.round(112 + (Math.random() * 10 - 5)));
-
-        if (scenarioElapsed === 8) {
-          addAlert('critical', 'Motor Phase Imbalance Detected', 'Current unbalance > 18%. Risk of winding insulation breakdown. Inspect contactor & VFD.');
+          // Dry run 5-second automatic trip
+          setDryRunTimer((prev) => {
+            const nextTime = prev + 1;
+            if (nextTime >= 5 && !isAutoShutdown) {
+              setIsAutoShutdown(true);
+              playChime(1040, 0.6);
+              setAlerts((al) => [
+                ...al,
+                {
+                  id: `trip-${Date.now()}`,
+                  timestamp: new Date().toLocaleTimeString(),
+                  severity: 'critical',
+                  title: 'EMERGENCY AUTO-SHUTDOWN TRIPPED',
+                  recommendation:
+                    'Dry run condition verified for 5 consecutive seconds. Main contactor opened to prevent seal seizure.'
+                }
+              ]);
+            }
+            return nextTime;
+          });
+        } else if (activeScenario === 'BLOCKAGE') {
+          // Pressure spikes, flow drops, cavitation vibration
+          nextPress = Number((5.8 + (Math.random() * 0.4 - 0.2)).toFixed(2));
+          nextFlow = Math.round(38 + Math.random() * 8);
+          nextCurr = Number((9.2 + (Math.random() * 0.5 - 0.25)).toFixed(2));
+          nextVib = Number((5.2 + (Math.random() * 0.8 - 0.4)).toFixed(2));
+          nextTemp = Number((54.0 + (Math.random() * 0.5 - 0.25)).toFixed(1));
+        } else if (activeScenario === 'ELECTRICAL_FAULT') {
+          // Surge current, fluctuation
+          const spike = Math.random() > 0.4;
+          nextCurr = spike ? Number((14.6 + Math.random() * 1.2).toFixed(2)) : 6.8;
+          nextTemp = Number((temperature + 0.6).toFixed(1));
+          nextVib = Number((3.8 + (Math.random() * 0.5 - 0.25)).toFixed(2));
+          nextPress = Number((3.0 * throttleMult).toFixed(2));
+          nextFlow = Math.round(115 * throttleMult);
         }
       }
-    }, baseInterval);
+
+      setVibration(nextVib);
+      setTemperature(nextTemp);
+      setCurrent(nextCurr);
+      setPressure(nextPress);
+      setFlowRate(nextFlow);
+
+      // Update 30-point buffers
+      setHistoryVib((prev) => [...prev.slice(1), nextVib]);
+      setHistoryTemp((prev) => [...prev.slice(1), nextTemp]);
+      setHistoryCurr((prev) => [...prev.slice(1), nextCurr]);
+      setHistoryPress((prev) => [...prev.slice(1), nextPress]);
+      setHistoryFlow((prev) => [...prev.slice(1), nextFlow]);
+    }, 1500 / simSpeed);
 
     return () => clearInterval(interval);
-  }, [isPlaying, simSpeed, activeScenario, scenarioElapsed, isAutoShutdown]);
+  }, [
+    isPlaying,
+    simSpeed,
+    activeScenario,
+    scenarioElapsed,
+    isAutoShutdown,
+    vibration,
+    temperature,
+    current,
+    pressure,
+    flowRate,
+    throttleValvePct
+  ]);
 
-  // Buffer updates for sparklines & historical charts
-  useEffect(() => {
-    setHistoryVib((h) => [...h.slice(1), vibration]);
-    setHistoryTemp((h) => [...h.slice(1), temperature]);
-    setHistoryCurr((h) => [...h.slice(1), current]);
-    setHistoryPress((h) => [...h.slice(1), pressure]);
-    setHistoryFlow((h) => [...h.slice(1), flowRate]);
-  }, [vibration, temperature, current, pressure, flowRate]);
-
-  // Auto-scroll alerts
-  useEffect(() => {
-    alertEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [alerts]);
-
-  // --- Sensor Statuses ---
+  // --- Sensor Status Evaluation ---
   const getVibrationStatus = (): 'normal' | 'warning' | 'critical' => {
     if (vibration > 8.0) return 'critical';
     if (vibration >= 4.0) return 'warning';
@@ -276,81 +524,74 @@ export default function App() {
   };
 
   // --- AI Health Score Calculation ---
-  // Health: 0 - 100 based on weighted normalization of all 5 sensors
   const healthScore = useMemo(() => {
     if (isAutoShutdown) return 12;
 
     let score = 100;
-
-    // Vibration penalty (normal 2-4, warn 4-8, crit >8)
     if (vibration > 8) score -= 40;
     else if (vibration > 4) score -= (vibration - 4) * 8;
 
-    // Temperature penalty (normal 40-60, warn 60-75, crit >75)
     if (temperature > 75) score -= 35;
     else if (temperature > 60) score -= (temperature - 60) * 1.8;
 
-    // Current penalty (normal 5-8, warn 8-12, crit >12)
     if (current > 12) score -= 30;
     else if (current > 8) score -= (current - 8) * 6;
 
-    // Pressure penalty (normal 2-4, warn <1.5 or >5)
     if (pressure > 5) score -= (pressure - 5) * 15;
     else if (pressure < 1.5) score -= (1.5 - pressure) * 20;
 
-    // Flow penalty (normal 100-150, warn <80)
     if (flowRate < 80) score -= Math.max(0, (80 - flowRate) * 0.45);
 
     return Math.max(5, Math.min(99, Math.round(score)));
   }, [vibration, temperature, current, pressure, flowRate, isAutoShutdown]);
 
-  // Health Score Status & Tone
   const healthMeta = useMemo(() => {
     if (healthScore >= 80) {
       return {
         label: 'Healthy',
         color: '#10b981',
-        bg: 'bg-emerald-500/15',
-        border: 'border-emerald-500/40',
-        text: 'text-emerald-400',
+        bg: theme === 'light' ? 'bg-emerald-50' : 'bg-emerald-500/15',
+        border: theme === 'light' ? 'border-emerald-300' : 'border-emerald-500/40',
+        text: theme === 'light' ? 'text-emerald-700' : 'text-emerald-400',
         action: 'Optimal Operation'
       };
     } else if (healthScore >= 65) {
       return {
         label: 'Monitor',
-        color: '#06b6d4',
-        bg: 'bg-cyan-500/15',
-        border: 'border-cyan-500/40',
-        text: 'text-cyan-400',
+        color: '#0284c7',
+        bg: theme === 'light' ? 'bg-sky-50' : 'bg-sky-500/15',
+        border: theme === 'light' ? 'border-sky-300' : 'border-sky-500/40',
+        text: theme === 'light' ? 'text-sky-700' : 'text-sky-400',
         action: 'Routine Observation'
       };
     } else if (healthScore >= 50) {
       return {
         label: 'Service Soon',
-        color: '#f59e0b',
-        bg: 'bg-amber-500/15',
-        border: 'border-amber-500/40',
-        text: 'text-amber-400',
+        color: '#d97706',
+        bg: theme === 'light' ? 'bg-amber-50' : 'bg-amber-500/15',
+        border: theme === 'light' ? 'border-amber-300' : 'border-amber-500/40',
+        text: theme === 'light' ? 'text-amber-700' : 'text-amber-400',
         action: 'Preventive Maintenance Due'
       };
     } else {
       return {
         label: 'Critical',
-        color: '#ef4444',
-        bg: 'bg-red-500/20',
-        border: 'border-red-500/50',
-        text: 'text-red-400',
+        color: '#e11d48',
+        bg: theme === 'light' ? 'bg-rose-50' : 'bg-rose-500/20',
+        border: theme === 'light' ? 'border-rose-300' : 'border-rose-500/50',
+        text: theme === 'light' ? 'text-rose-700' : 'text-rose-400',
         action: 'Immediate Intervention'
       };
     }
-  }, [healthScore]);
+  }, [healthScore, theme]);
 
   // --- Digital Twin Metrics ---
   const digitalTwinMetrics = useMemo(() => {
-    // Failure probability inverse of health score
-    const failProb = Math.min(98.5, Math.max(1.8, Number(((100 - healthScore) * 1.15).toFixed(1))));
+    const failProb = Math.min(
+      98.5,
+      Math.max(1.8, Number(((100 - healthScore) * 1.15).toFixed(1)))
+    );
 
-    // Remaining Useful Life (RUL) in days
     let rulDays = 142;
     if (activeScenario === 'BEARING_WEAR') {
       const progress = Math.min(1, scenarioElapsed / 30);
@@ -363,8 +604,7 @@ export default function App() {
       rulDays = 9;
     }
 
-    // Diagnostic confidence
-    const confidence = 94.2 + (Math.sin(scenarioElapsed) * 1.5);
+    const confidence = 94.2 + Math.sin(scenarioElapsed) * 1.5;
 
     return {
       failProb,
@@ -373,22 +613,11 @@ export default function App() {
     };
   }, [healthScore, activeScenario, scenarioElapsed, dryRunTimer, isAutoShutdown]);
 
-  // --- Pump Motor RPM Calculation for Animation Speed ---
-  const motorRPM = useMemo(() => {
-    if (isAutoShutdown) return 0;
-    if (activeScenario === 'NORMAL') return 1450;
-    if (activeScenario === 'BEARING_WEAR') return 1410;
-    if (activeScenario === 'BLOCKAGE') return 1475;
-    if (activeScenario === 'DRY_RUN') return 1520;
-    if (activeScenario === 'ELECTRICAL_FAULT') return 1380 + Math.sin(scenarioElapsed * 3) * 120;
-    return 1450;
-  }, [isAutoShutdown, activeScenario, scenarioElapsed]);
-
-  // Sparkline renderer
+  // --- Sparkline SVG Renderer ---
   const renderSparkline = (data: number[], min: number, max: number, color: string) => {
     if (!data || data.length < 2) return null;
-    const w = 180;
-    const h = 32;
+    const w = 220;
+    const h = 34;
     const pad = 2;
     const effH = h - pad * 2;
 
@@ -402,248 +631,119 @@ export default function App() {
     const pathD = `M ${points.join(' L ')}`;
     const areaD = `M ${points[0]} L ${points.join(' L ')} L ${w},${h} L 0,${h} Z`;
 
+    const gradId = `grad-${color.replace('#', '')}-${theme}`;
+
     return (
-      <svg className="w-full h-8 overflow-visible" viewBox={`0 0 ${w} ${h}`}>
+      <svg className="w-full h-9 overflow-visible" viewBox={`0 0 ${w} ${h}`}>
         <defs>
-          <linearGradient id={`grad-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity={theme === 'light' ? 0.28 : 0.22} />
             <stop offset="100%" stopColor={color} stopOpacity="0.0" />
           </linearGradient>
         </defs>
-        <path d={areaD} fill={`url(#grad-${color.replace('#', '')})`} />
-        <path d={pathD} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d={areaD} fill={`url(#${gradId})`} />
+        <path
+          d={pathD}
+          fill="none"
+          stroke={color}
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </svg>
     );
   };
 
-  // Standalone Single-File HTML exporter code
-  const standaloneHtmlCode = useMemo(() => {
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PumpPulse AI - IoT Pump Condition Monitoring</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background-color: #0f172a; color: #f8fafc; font-family: 'Plus Jakarta Sans', sans-serif; padding: 16px; }
-    .header { background: #1e293b; border: 1px solid #334155; padding: 14px 20px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-    .grid { display: grid; grid-template-columns: 2fr 3fr; gap: 16px; }
-    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-    .panel { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; }
-    .btn { background: #334155; color: #fff; border: 1px solid #475569; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 0.85rem; transition: all 0.2s; }
-    .btn:hover { background: #475569; }
-    .btn-active { background: #06b6d4; border-color: #06b6d4; color: #0f172a; }
-    .gauge { width: 130px; height: 130px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; margin: 0 auto; border: 6px solid #10b981; }
-    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-    .rotating { animation: spin 1.2s linear infinite; }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <div>
-      <h1 style="font-size: 1.25rem; font-weight:700; color:#38bdf8;">PumpPulse AI - IoT Condition Monitoring System</h1>
-      <div style="font-size: 0.8rem; color: #94a3b8; font-family: 'JetBrains Mono';">Digital Twin &amp; Edge Condition Monitoring · ESP32 + TinyML</div>
-    </div>
-    <div id="stateBadge" style="background:#10b98122; color:#10b981; border:1px solid #10b98166; padding:6px 14px; border-radius:6px; font-weight:700;">HEALTHY (98%)</div>
-  </div>
+  const isLight = theme === 'light';
 
-  <div class="grid">
-    <div class="panel">
-      <h3>VIRTUAL PUMP &amp; SENSORS</h3>
-      <div style="text-align: center; margin: 20px 0;">
-        <svg width="120" height="120" viewBox="0 0 100 100">
-          <circle cx="50" cy="50" r="44" fill="#0f172a" stroke="#334155" stroke-width="4"/>
-          <g id="pumpImpeller" class="rotating" style="transform-origin: 50px 50px;">
-            <circle cx="50" cy="50" r="14" fill="#06b6d4" />
-            <path d="M50 20 L50 50 M80 50 L50 50 M50 80 L50 50 M20 50 L50 50" stroke="#06b6d4" stroke-width="6" stroke-linecap="round"/>
-          </g>
-        </svg>
-        <div id="motorRpm" style="font-family:'JetBrains Mono'; font-size:0.9rem; margin-top:6px; color:#38bdf8;">1450 RPM · BEP 94.2%</div>
-      </div>
-
-      <div style="font-family:'JetBrains Mono'; font-size:0.85rem; display:grid; gap:8px;">
-        <div style="background:#0f172a; padding:10px; border-radius:6px;">Vibration: <span id="valVib" style="color:#10b981; font-weight:bold;">2.8 mm/s</span> (Norm: 2-4)</div>
-        <div style="background:#0f172a; padding:10px; border-radius:6px;">Temperature: <span id="valTemp" style="color:#10b981; font-weight:bold;">48.5 °C</span> (Norm: 40-60)</div>
-        <div style="background:#0f172a; padding:10px; border-radius:6px;">Current: <span id="valCurr" style="color:#10b981; font-weight:bold;">6.4 A</span> (Norm: 5-8)</div>
-        <div style="background:#0f172a; padding:10px; border-radius:6px;">Pressure: <span id="valPress" style="color:#10b981; font-weight:bold;">3.2 bar</span> (Norm: 2-4)</div>
-        <div style="background:#0f172a; padding:10px; border-radius:6px;">Flow Rate: <span id="valFlow" style="color:#10b981; font-weight:bold;">128 L/min</span> (Norm: 100-150)</div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h3>AI HEALTH &amp; DIGITAL TWIN</h3>
-      <div style="text-align:center; margin: 15px 0;">
-        <div class="gauge" id="healthGauge">
-          <div id="gaugeScore" style="font-size: 1.8rem; font-weight:bold; font-family:'JetBrains Mono'; color:#10b981;">98</div>
-          <div id="gaugeLabel" style="font-size: 0.75rem; color:#94a3b8;">HEALTHY</div>
-        </div>
-      </div>
-      <div style="background:#0f172a; padding:12px; border-radius:6px; font-family:'JetBrains Mono'; font-size:0.8rem; margin-bottom:12px;">
-        <div>Predicted Failure Prob: <span id="valFail" style="color:#10b981;">2.4%</span></div>
-        <div>Remaining Useful Life (RUL): <span id="valRul" style="color:#38bdf8; font-weight:bold;">142 Days</span></div>
-        <div>Diagnosis Confidence: <span style="color:#a855f7;">96.8%</span></div>
-      </div>
-      <div style="display:flex; flex-wrap:wrap; gap:8px;">
-        <button class="btn btn-active" onclick="setScenario('NORMAL', this)">Normal</button>
-        <button class="btn" onclick="setScenario('BEARING_WEAR', this)">Bearing Wear</button>
-        <button class="btn" onclick="setScenario('DRY_RUN', this)">Dry Run</button>
-        <button class="btn" onclick="setScenario('BLOCKAGE', this)">Blockage</button>
-        <button class="btn" onclick="setScenario('ELECTRICAL_FAULT', this)">Electrical Fault</button>
-      </div>
-      <div id="alertBox" style="margin-top:12px; background:#0f172a; padding:10px; border-radius:6px; font-family:'JetBrains Mono'; font-size:0.75rem; height:120px; overflow-y:auto;">
-        <div style="color:#10b981;">[SYSTEM READY] ESP32 edge condition monitoring active. All channels nominal.</div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    let mode = 'NORMAL';
-    let vib = 2.8, temp = 48.5, curr = 6.4, press = 3.2, flow = 128;
-    let t = 0;
-
-    function setScenario(sc, btn) {
-      mode = sc;
-      t = 0;
-      document.querySelectorAll('.btn').forEach(b => b.classList.remove('btn-active'));
-      btn.classList.add('btn-active');
-      logAlert('Scenario engaged: ' + sc);
-    }
-
-    function logAlert(msg) {
-      const b = document.getElementById('alertBox');
-      const d = document.createElement('div');
-      d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
-      b.appendChild(d);
-      b.scrollTop = b.scrollHeight;
-    }
-
-    setInterval(() => {
-      t++;
-      if (mode === 'NORMAL') {
-        vib = 2.8 + (Math.random() * 0.4 - 0.2);
-        temp = 48.5 + (Math.random() * 0.6 - 0.3);
-        curr = 6.4 + (Math.random() * 0.3 - 0.15);
-        press = 3.2 + (Math.random() * 0.2 - 0.1);
-        flow = 128 + Math.round(Math.random() * 4 - 2);
-      } else if (mode === 'BEARING_WEAR') {
-        vib = Math.min(9.4, 2.8 + t * 0.22);
-        temp = Math.min(78, 48.5 + t * 0.8);
-      } else if (mode === 'DRY_RUN') {
-        flow = 0;
-        press = 0.4;
-        curr = 13.2;
-        temp += 3.5;
-        if (t >= 5) {
-          logAlert('AUTO-SHUTDOWN ENGAGED: Dry Run Threshold Exceeded');
-        }
-      } else if (mode === 'BLOCKAGE') {
-        press = 5.8; flow = 42; curr = 9.1;
-      } else if (mode === 'ELECTRICAL_FAULT') {
-        curr = Math.random() > 0.4 ? 14.8 : 6.4;
-      }
-
-      document.getElementById('valVib').textContent = vib.toFixed(2) + ' mm/s';
-      document.getElementById('valTemp').textContent = temp.toFixed(1) + ' °C';
-      document.getElementById('valCurr').textContent = curr.toFixed(2) + ' A';
-      document.getElementById('valPress').textContent = press.toFixed(2) + ' bar';
-      document.getElementById('valFlow').textContent = Math.round(flow) + ' L/min';
-
-      let score = Math.max(10, Math.round(100 - (vib > 4 ? (vib-4)*10 : 0) - (temp > 60 ? (temp-60)*1.8 : 0) - (curr > 8 ? (curr-8)*6 : 0)));
-      document.getElementById('gaugeScore').textContent = score;
-      document.getElementById('healthGauge').style.borderColor = score > 80 ? '#10b981' : score > 50 ? '#f59e0b' : '#ef4444';
-      document.getElementById('gaugeScore').style.color = score > 80 ? '#10b981' : score > 50 ? '#f59e0b' : '#ef4444';
-    }, 1000);
-  </script>
-</body>
-</html>`;
-  }, []);
-
-  const downloadHtml = () => {
-    const blob = new Blob([standaloneHtmlCode], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'pumppulse_ai_monitor.html';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const copyCode = () => {
-    navigator.clipboard.writeText(standaloneHtmlCode);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
-  };
+  // Filtered Alerts
+  const filteredAlerts = useMemo(() => {
+    if (alertFilter === 'all') return alerts;
+    return alerts.filter((a) => a.severity === alertFilter);
+  }, [alerts, alertFilter]);
 
   return (
-    <div className="min-h-screen bg-[#0f172a] text-slate-100 font-sans antialiased flex flex-col selection:bg-cyan-500/25">
-      {/* Top SCADA Navigation Bar */}
-      <header className="border-b border-slate-800 bg-[#1e293b]/95 backdrop-blur-md sticky top-0 z-40 px-4 py-3">
-        <div className="max-w-[1780px] mx-auto flex flex-col md:flex-row items-center justify-between gap-3">
-          {/* Brand */}
-          <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-start">
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500/20 to-blue-600/30 border border-cyan-500/50 flex items-center justify-center text-cyan-400 shadow-[0_0_16px_rgba(6,182,212,0.3)]">
-                <Activity className="w-5 h-5 animate-pulse" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-1.5">
-                    <span>PumpPulse AI</span>
-                    <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold tracking-wider">
-                      Edge + Digital Twin
-                    </span>
-                  </h1>
-                </div>
-                <div className="flex items-center gap-2 text-xs font-mono text-slate-400 mt-0.5">
-                  <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                    Asset: Centrifugal CP-300 #4
-                  </span>
-                  <span>·</span>
-                  <span>Crompton 5.5kW Motor</span>
-                  <span>·</span>
-                  <span className="hidden sm:inline text-slate-500">Sampling: 10 kHz TinyML</span>
-                </div>
-              </div>
+    <div
+      className={`min-h-screen transition-colors duration-300 ${
+        isLight ? 'bg-slate-50 text-slate-900' : 'bg-[#0d1117] text-[#e6edf3]'
+      }`}
+    >
+      {/* ================= TOP NAVBAR HEADER ================= */}
+      <header
+        className={`sticky top-0 z-40 border-b backdrop-blur-md transition-colors ${
+          isLight
+            ? 'bg-white/95 border-slate-200 shadow-xs'
+            : 'bg-[#161b22]/95 border-slate-800 shadow-md'
+        }`}
+      >
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between flex-wrap gap-3">
+          {/* Brand & Subtitle */}
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-xl bg-gradient-to-tr from-sky-600 to-cyan-500 text-white shadow-xs">
+              <Activity className="w-5 h-5" />
             </div>
-
-            {/* Quick State Tag for Mobile */}
-            <div className="md:hidden">
-              <span className={`px-2.5 py-1 text-xs font-mono font-bold rounded border ${healthMeta.bg} ${healthMeta.text} ${healthMeta.border}`}>
-                {healthScore}% {healthMeta.label}
-              </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                  <span>PumpPulse AI</span>
+                  <span
+                    className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded-full font-bold tracking-wider ${
+                      isLight
+                        ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                        : 'bg-cyan-950 text-cyan-300 border border-cyan-800'
+                    }`}
+                  >
+                    IoT Digital Twin
+                  </span>
+                </h1>
+              </div>
+              <div className="flex items-center gap-2 text-xs font-mono text-slate-500 mt-0.5">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Crompton CP-300 (5.5kW)
+                </span>
+                <span>·</span>
+                <span className="hidden sm:inline">TinyML 10 kHz</span>
+                <span>·</span>
+                <span className={healthMeta.text}>
+                  Status: <b>{healthMeta.label}</b>
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Controls: Play/Pause, Speed, Standalone Export */}
-          <div className="flex items-center gap-2 flex-wrap justify-end w-full md:w-auto">
+          {/* Quick Action Toolbar */}
+          <div className="flex items-center gap-2 flex-wrap justify-end">
             {/* Play / Pause */}
             <button
               onClick={() => setIsPlaying(!isPlaying)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md border transition-all ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
                 isPlaying
-                  ? 'bg-slate-800 border-slate-700 text-slate-200 hover:bg-slate-700'
-                  : 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300'
+                  ? isLight
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-600'
               }`}
             >
-              {isPlaying ? <Pause className="w-3.5 h-3.5 text-amber-400" /> : <Play className="w-3.5 h-3.5 text-emerald-400" />}
-              <span>{isPlaying ? 'Pause Sim' : 'Resume Sim'}</span>
+              {isPlaying ? <Pause className="w-3.5 h-3.5 text-amber-500" /> : <Play className="w-3.5 h-3.5 text-white" />}
+              <span>{isPlaying ? 'Pause' : 'Resume'}</span>
             </button>
 
-            {/* Speed Selector (1x, 2x, 4x) */}
-            <div className="flex items-center p-0.5 bg-slate-900 rounded-md border border-slate-800 text-xs font-mono">
+            {/* Sim Speed (1x, 2x, 4x) */}
+            <div
+              className={`flex items-center p-0.5 rounded-lg border text-xs font-mono ${
+                isLight ? 'bg-slate-100 border-slate-200' : 'bg-slate-900 border-slate-800'
+              }`}
+            >
               {[1, 2, 4].map((spd) => (
                 <button
                   key={spd}
                   onClick={() => setSimSpeed(spd)}
-                  className={`px-2 py-1 rounded transition-colors ${
+                  className={`px-2 py-0.5 rounded-md font-semibold transition-all ${
                     simSpeed === spd
-                      ? 'bg-cyan-600 text-white font-bold shadow-sm'
+                      ? 'bg-sky-600 text-white shadow-xs'
+                      : isLight
+                      ? 'text-slate-600 hover:text-slate-900'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
@@ -652,401 +752,615 @@ export default function App() {
               ))}
             </div>
 
+            {/* Audio Toggle */}
+            <button
+              onClick={toggleAudio}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                audioEnabled
+                  ? isLight
+                    ? 'bg-sky-50 text-sky-700 border-sky-300'
+                    : 'bg-cyan-950 text-cyan-300 border-cyan-700'
+                  : isLight
+                  ? 'bg-slate-100 text-slate-500 border-slate-200 hover:text-slate-800'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+              title={audioEnabled ? 'Mute Pump Motor Sound' : 'Enable Realistic Motor Audio'}
+            >
+              {audioEnabled ? <Volume2 className="w-3.5 h-3.5 text-sky-600 animate-pulse" /> : <VolumeX className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{audioEnabled ? 'Audio ON' : 'Mute'}</span>
+            </button>
+
+            {/* Theme Toggle Button */}
+            <button
+              onClick={() => setTheme(isLight ? 'dark' : 'light')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${
+                isLight
+                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-300 shadow-2xs'
+                  : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700'
+              }`}
+              title={isLight ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
+            >
+              {isLight ? <Moon className="w-3.5 h-3.5 text-slate-700" /> : <Sun className="w-3.5 h-3.5 text-amber-400" />}
+              <span>{isLight ? 'Dark' : 'Light'}</span>
+            </button>
+
             {/* Reset Baseline */}
             <button
               onClick={() => switchScenario('NORMAL')}
-              className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
-              title="Reset to Normal Conditions"
+              className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                isLight
+                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-300'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+              title="Reset All Sensors to Nominal"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Reset</span>
-            </button>
-
-            {/* Single HTML Export */}
-            <button
-              onClick={() => setShowExportModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-cyan-950/60 border border-cyan-600/50 text-cyan-300 hover:bg-cyan-900/50 transition-colors"
-            >
-              <FileCode className="w-3.5 h-3.5 text-cyan-400" />
-              <span>Export HTML</span>
             </button>
           </div>
         </div>
       </header>
 
-      {/* Main Workspace */}
-      <main className="flex-1 p-3 sm:p-5 max-w-[1780px] w-full mx-auto flex flex-col gap-4">
-        {/* ================= SECTION 1: INTERACTIVE SYSTEM ARCHITECTURE DIAGRAM ================= */}
-        <section className="bg-[#1e293b] border border-slate-700/80 rounded-xl p-4 sm:p-5 relative overflow-hidden shadow-lg">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-700/60 mb-4 gap-2">
+      {/* ================= MAIN CONTAINER ================= */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+        {/* ================= SECTION 1: INTERACTIVE SYSTEM ARCHITECTURE ================= */}
+        <section
+          className={`rounded-2xl border p-5 transition-all ${
+            isLight
+              ? 'bg-white border-slate-200/90 shadow-xs'
+              : 'bg-[#161b22] border-slate-800 shadow-md'
+          }`}
+        >
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-4 flex-wrap gap-2">
             <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-cyan-400" />
-              <h2 className="text-sm font-bold tracking-wide uppercase text-slate-200">
-                End-to-End System Architecture &amp; Data Pipeline
+              <div className="p-1.5 rounded-lg bg-sky-500/10 text-sky-600 font-bold">
+                <Layers className="w-4 h-4" />
+              </div>
+              <h2 className="text-sm font-bold tracking-wider uppercase font-mono text-slate-800 dark:text-slate-200">
+                1. System Architecture &amp; Real-Time Data Pipeline
               </h2>
-              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
-                Live Data Stream (10 kHz FFT)
-              </span>
             </div>
-            <div className="text-xs text-slate-400 flex items-center gap-3">
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
-                Dashed lines = Active MQTT Packets
-              </span>
-              <span className="text-slate-600">|</span>
-              <span className="text-slate-400">Hover or click nodes for technical specs</span>
-            </div>
-          </div>
-
-          {/* Architecture Flowchart: Sensors -> Edge -> Cloud -> App */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 relative">
-            {/* Column 1: Sensors */}
-            <div
-              onMouseEnter={() => setHoveredArchNode('sensors')}
-              onMouseLeave={() => setHoveredArchNode(null)}
-              onClick={() => setSelectedArchNode(selectedArchNode === 'sensors' ? null : 'sensors')}
-              className={`p-3.5 rounded-lg border transition-all cursor-pointer relative ${
-                hoveredArchNode === 'sensors' || selectedArchNode === 'sensors'
-                  ? 'bg-slate-800/90 border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 font-bold">Layer 01 · Transducers</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              </div>
-              <div className="font-bold text-sm text-white flex items-center gap-1.5">
-                <Activity className="w-4 h-4 text-cyan-400" />
-                <span>Physical Sensors</span>
-              </div>
-              <ul className="mt-2 text-xs font-mono text-slate-300 space-y-1">
-                <li>· ADXL345: 3-Axis Vibration (10kHz)</li>
-                <li>· PT100 RTD: Bearing Winding Temp</li>
-                <li>· Current CT: Motor Phase Amperage</li>
-                <li>· 4-20mA: Suction/Head Pressure</li>
-                <li>· Hall Meter: Volumetric Flow Rate</li>
-              </ul>
-              <div className="mt-2.5 pt-2 border-t border-slate-800 text-[11px] text-slate-400">
-                Transducing raw mechanical/electrical waveforms into analog &amp; SPI/I2C signals.
-              </div>
-            </div>
-
-            {/* Column 2: Edge Device */}
-            <div
-              onMouseEnter={() => setHoveredArchNode('edge')}
-              onMouseLeave={() => setHoveredArchNode(null)}
-              onClick={() => setSelectedArchNode(selectedArchNode === 'edge' ? null : 'edge')}
-              className={`p-3.5 rounded-lg border transition-all cursor-pointer relative ${
-                hoveredArchNode === 'edge' || selectedArchNode === 'edge'
-                  ? 'bg-slate-800/90 border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 font-bold">Layer 02 · Edge Compute</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              </div>
-              <div className="font-bold text-sm text-white flex items-center gap-1.5">
-                <Cpu className="w-4 h-4 text-cyan-400" />
-                <span>ESP32 Edge Gateway</span>
-              </div>
-              <ul className="mt-2 text-xs font-mono text-slate-300 space-y-1">
-                <li>· Dual-core Xtensa @ 240 MHz</li>
-                <li>· TinyML Fast Fourier Transform (FFT)</li>
-                <li>· Real-time Peak-to-Peak &amp; Kurtosis</li>
-                <li>· Store-and-Forward Flash Buffer</li>
-                <li>· Sub-50ms Dry Run Trip Logic</li>
-              </ul>
-              <div className="mt-2.5 pt-2 border-t border-slate-800 text-[11px] text-slate-400">
-                Executes localized inference &amp; fault trip before uplink to avoid latency hazards.
-              </div>
-            </div>
-
-            {/* Column 3: Cloud AI & Storage */}
-            <div
-              onMouseEnter={() => setHoveredArchNode('cloud')}
-              onMouseLeave={() => setHoveredArchNode(null)}
-              onClick={() => setSelectedArchNode(selectedArchNode === 'cloud' ? null : 'cloud')}
-              className={`p-3.5 rounded-lg border transition-all cursor-pointer relative ${
-                hoveredArchNode === 'cloud' || selectedArchNode === 'cloud'
-                  ? 'bg-slate-800/90 border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 font-bold">Layer 03 · Cloud Intelligence</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              </div>
-              <div className="font-bold text-sm text-white flex items-center gap-1.5">
-                <Cloud className="w-4 h-4 text-cyan-400" />
-                <span>InfluxDB &amp; ML Cloud</span>
-              </div>
-              <ul className="mt-2 text-xs font-mono text-slate-300 space-y-1">
-                <li>· InfluxDB Time-Series Engine</li>
-                <li>· Random Forest Fault Classifier</li>
-                <li>· LSTM Remaining Useful Life (RUL)</li>
-                <li>· Digital Twin Degradation Model</li>
-                <li>· TLS 1.3 MQTT / CoAP Broker</li>
-              </ul>
-              <div className="mt-2.5 pt-2 border-t border-slate-800 text-[11px] text-slate-400">
-                Predicts equipment breakdown probability &amp; optimizes predictive maintenance schedules.
-              </div>
-            </div>
-
-            {/* Column 4: Mobile & SCADA Application */}
-            <div
-              onMouseEnter={() => setHoveredArchNode('app')}
-              onMouseLeave={() => setHoveredArchNode(null)}
-              onClick={() => setSelectedArchNode(selectedArchNode === 'app' ? null : 'app')}
-              className={`p-3.5 rounded-lg border transition-all cursor-pointer relative ${
-                hoveredArchNode === 'app' || selectedArchNode === 'app'
-                  ? 'bg-slate-800/90 border-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.25)]'
-                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 font-bold">Layer 04 · Operations</span>
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              </div>
-              <div className="font-bold text-sm text-white flex items-center gap-1.5">
-                <Smartphone className="w-4 h-4 text-cyan-400" />
-                <span>Mobile App &amp; SCADA</span>
-              </div>
-              <ul className="mt-2 text-xs font-mono text-slate-300 space-y-1">
-                <li>· React Native Field Technician App</li>
-                <li>· Push Alarms (SMS &amp; Webhook)</li>
-                <li>· Acoustic Vibration Stethoscope</li>
-                <li>· Crompton Central Fleet SCADA</li>
-                <li>· Auto Work-Order Dispatch</li>
-              </ul>
-              <div className="mt-2.5 pt-2 border-t border-slate-800 text-[11px] text-slate-400">
-                Presents actionable diagnostics with maintenance countdowns for plant engineers.
-              </div>
-            </div>
-          </div>
-
-          {/* Animated SVG Data Flow Ribbon Between Nodes */}
-          <div className="hidden md:block mt-3 pt-2">
-            <svg className="w-full h-7" viewBox="0 0 1000 24" preserveAspectRatio="none">
-              <line x1="120" y1="12" x2="880" y2="12" stroke="#334155" strokeWidth="3" />
-              <line
-                x1="120"
-                y1="12"
-                x2="880"
-                y2="12"
-                stroke="#06b6d4"
-                strokeWidth="3"
-                className="animate-data-flow"
-              />
-              <circle cx="120" cy="12" r="5" fill="#10b981" />
-              <circle cx="370" cy="12" r="5" fill="#06b6d4" />
-              <circle cx="630" cy="12" r="5" fill="#06b6d4" />
-              <circle cx="880" cy="12" r="5" fill="#a855f7" />
-            </svg>
-          </div>
-        </section>
-
-        {/* ================= SECTION 2: SCENARIO SIMULATOR CONTROLS ================= */}
-        <div className="bg-[#1e293b] border border-slate-700/80 rounded-xl p-3 sm:p-4 flex flex-col md:flex-row items-center justify-between gap-3 shadow-md">
-          <div className="flex items-center gap-2">
-            <Sliders className="w-4 h-4 text-cyan-400" />
-            <span className="text-xs font-bold font-mono tracking-wider uppercase text-slate-300">
-              Scenario Injection Bench:
+            <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-400 dark:border-emerald-800 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+              MQTT TLS 1.3 Streaming
             </span>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap justify-center">
-            {/* Normal */}
-            <button
-              onClick={() => switchScenario('NORMAL')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                activeScenario === 'NORMAL'
-                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
-                  : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-850'
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3.5">
+            {/* Layer 01: Sensors */}
+            <div
+              className={`p-4 rounded-xl border transition-all ${
+                isLight
+                  ? 'bg-slate-50/80 border-slate-200 hover:border-sky-400 hover:shadow-xs'
+                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
               }`}
             >
-              Normal Operation
-            </button>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-mono uppercase font-bold text-sky-600">
+                  Layer 01 · Transducers
+                </span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              </div>
+              <div className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Radio className="w-4 h-4 text-sky-500" />
+                <span>Sensors Cluster</span>
+              </div>
+              <ul className="mt-2.5 text-xs font-mono text-slate-600 dark:text-slate-300 space-y-1">
+                <li>· ADXL345: 3-Axis Vib (10 kHz)</li>
+                <li>· PT100 RTD: Bearing Temp</li>
+                <li>· Hall CT: Phase Current</li>
+                <li>· Piezoresistive: Pressure</li>
+                <li>· Magnetic Flowmeter: Q</li>
+              </ul>
+            </div>
 
-            {/* Bearing Wear */}
-            <button
-              onClick={() => switchScenario('BEARING_WEAR')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                activeScenario === 'BEARING_WEAR'
-                  ? 'bg-amber-500/25 border-amber-400 text-amber-300 shadow-[0_0_14px_rgba(245,158,11,0.3)]'
-                  : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-850'
+            {/* Layer 02: Edge AI */}
+            <div
+              className={`p-4 rounded-xl border transition-all ${
+                isLight
+                  ? 'bg-slate-50/80 border-slate-200 hover:border-sky-400 hover:shadow-xs'
+                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
               }`}
             >
-              Bearing Wear Simulation (30s)
-            </button>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-mono uppercase font-bold text-sky-600">
+                  Layer 02 · Edge Processing
+                </span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              </div>
+              <div className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Server className="w-4 h-4 text-sky-500" />
+                <span>ESP32 Gateway</span>
+              </div>
+              <ul className="mt-2.5 text-xs font-mono text-slate-600 dark:text-slate-300 space-y-1">
+                <li>· Dual-Core Xtensa 240MHz</li>
+                <li>· TinyML Fast Fourier FFT</li>
+                <li>· SPIFFS Store &amp; Forward</li>
+                <li>· Sub-50ms Dry Run Trip</li>
+                <li>· ISO 10816 Zone Classifier</li>
+              </ul>
+            </div>
 
-            {/* Dry Run */}
-            <button
-              onClick={() => switchScenario('DRY_RUN')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                activeScenario === 'DRY_RUN'
-                  ? 'bg-red-500/25 border-red-400 text-red-300 shadow-[0_0_14px_rgba(239,68,68,0.3)]'
-                  : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-850'
+            {/* Layer 03: Cloud AI */}
+            <div
+              className={`p-4 rounded-xl border transition-all ${
+                isLight
+                  ? 'bg-slate-50/80 border-slate-200 hover:border-sky-400 hover:shadow-xs'
+                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
               }`}
             >
-              Dry Run Simulation (5s Trip)
-            </button>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-mono uppercase font-bold text-sky-600">
+                  Layer 03 · Analytics
+                </span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              </div>
+              <div className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Cloud className="w-4 h-4 text-sky-500" />
+                <span>InfluxDB &amp; LSTM Twin</span>
+              </div>
+              <ul className="mt-2.5 text-xs font-mono text-slate-600 dark:text-slate-300 space-y-1">
+                <li>· High-Res Time-Series Store</li>
+                <li>· Random Forest Anomaly Model</li>
+                <li>· LSTM Degradation Curves</li>
+                <li>· Physics-Informed Sync</li>
+                <li>· Auto Maintenance Forecast</li>
+              </ul>
+            </div>
 
-            {/* Blockage */}
-            <button
-              onClick={() => switchScenario('BLOCKAGE')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                activeScenario === 'BLOCKAGE'
-                  ? 'bg-orange-500/25 border-orange-400 text-orange-300 shadow-[0_0_12px_rgba(249,115,22,0.3)]'
-                  : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-850'
+            {/* Layer 04: Mobile & SCADA */}
+            <div
+              className={`p-4 rounded-xl border transition-all ${
+                isLight
+                  ? 'bg-slate-50/80 border-slate-200 hover:border-sky-400 hover:shadow-xs'
+                  : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
               }`}
             >
-              Blockage Simulation
-            </button>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] font-mono uppercase font-bold text-sky-600">
+                  Layer 04 · Operations
+                </span>
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              </div>
+              <div className="font-bold text-sm text-slate-900 dark:text-white flex items-center gap-1.5">
+                <Smartphone className="w-4 h-4 text-sky-500" />
+                <span>Mobile App &amp; SCADA</span>
+              </div>
+              <ul className="mt-2.5 text-xs font-mono text-slate-600 dark:text-slate-300 space-y-1">
+                <li>· React Native Technician UI</li>
+                <li>· Push Alarms (SMS/Email)</li>
+                <li>· Acoustic Stethoscope Tool</li>
+                <li>· Work Order Auto-Dispatch</li>
+                <li>· Fleet Reliability Portal</li>
+              </ul>
+            </div>
+          </div>
+        </section>
 
-            {/* Electrical Fault */}
-            <button
-              onClick={() => switchScenario('ELECTRICAL_FAULT')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                activeScenario === 'ELECTRICAL_FAULT'
-                  ? 'bg-purple-500/25 border-purple-400 text-purple-300 shadow-[0_0_12px_rgba(168,85,247,0.3)]'
-                  : 'bg-slate-900/80 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-850'
-              }`}
-            >
-              Electrical Fault Simulation
-            </button>
+        {/* ================= SECTION 2: SCENARIO SELECTOR & OPERATOR GUIDE ================= */}
+        <section
+          className={`rounded-2xl border p-5 transition-all ${
+            isLight
+              ? 'bg-white border-slate-200/90 shadow-xs'
+              : 'bg-[#161b22] border-slate-800 shadow-md'
+          }`}
+        >
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-3 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Sliders className="w-4 h-4 text-sky-600" />
+              <h2 className="text-sm font-bold tracking-wider uppercase font-mono text-slate-800 dark:text-slate-200">
+                2. Real-Time Condition Simulation Scenarios
+              </h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowScenarioGuide(!showScenarioGuide)}
+                className="text-xs font-semibold text-sky-600 hover:text-sky-700 flex items-center gap-1"
+              >
+                <Info className="w-3.5 h-3.5" />
+                <span>{showScenarioGuide ? 'Hide Guide' : 'Show Guide'}</span>
+              </button>
+              <span className="text-xs font-mono text-slate-500">
+                Elapsed: <b>{scenarioElapsed}s</b>
+              </span>
+            </div>
           </div>
 
-          {/* Quick status text */}
-          <div className="text-[11px] font-mono text-slate-400 hidden lg:block">
-            Mode: <span className="font-bold text-white">{activeScenario}</span> ({scenarioElapsed}s)
+          {/* Scenario Buttons */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+            {[
+              { id: 'NORMAL', label: '1. Normal Nominal', desc: 'Rated BEP, all safe' },
+              { id: 'BEARING_WEAR', label: '2. Bearing Wear', desc: '30s vib & temp ramp' },
+              { id: 'DRY_RUN', label: '3. Dry Run (Trip)', desc: '5s auto-shutdown' },
+              { id: 'BLOCKAGE', label: '4. Blockage', desc: 'Cavitation & head spike' },
+              { id: 'ELECTRICAL_FAULT', label: '5. Electrical Fault', desc: 'Phase surge current' }
+            ].map((sc) => (
+              <button
+                key={sc.id}
+                onClick={() => switchScenario(sc.id as ScenarioType)}
+                className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                  activeScenario === sc.id
+                    ? 'bg-sky-600 text-white border-sky-600 shadow-xs ring-2 ring-sky-300/50'
+                    : isLight
+                    ? 'bg-slate-50/90 text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                    : 'bg-slate-900/80 text-slate-300 border-slate-800 hover:bg-slate-800'
+                }`}
+              >
+                <div className="font-bold text-xs">{sc.label}</div>
+                <div
+                  className={`text-[11px] mt-1 ${
+                    activeScenario === sc.id
+                      ? 'text-sky-100'
+                      : isLight
+                      ? 'text-slate-500'
+                      : 'text-slate-400'
+                  }`}
+                >
+                  {sc.desc}
+                </div>
+              </button>
+            ))}
           </div>
-        </div>
+
+          {/* User-Friendly Scenario Walkthrough Guide */}
+          {showScenarioGuide && (
+            <div
+              className={`mt-4 p-4 rounded-xl border transition-all ${
+                isLight
+                  ? 'bg-sky-50/60 border-sky-200/80 text-slate-800'
+                  : 'bg-slate-900/90 border-slate-700 text-slate-300'
+              }`}
+            >
+              <div className="flex items-center gap-2 font-bold text-xs text-sky-700 dark:text-sky-400 mb-1.5">
+                <HelpCircle className="w-4 h-4" />
+                <span>OPERATOR WALKTHROUGH: {SCENARIO_GUIDES[activeScenario].title}</span>
+              </div>
+              <p className="text-xs text-slate-600 dark:text-slate-300 mb-2 leading-relaxed">
+                {SCENARIO_GUIDES[activeScenario].summary}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] font-mono pt-2 border-t border-sky-200/60 dark:border-slate-800">
+                <div>
+                  <span className="font-bold text-slate-700 dark:text-slate-300">
+                    Telemetry Indicators:
+                  </span>{' '}
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {SCENARIO_GUIDES[activeScenario].expected}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold text-slate-700 dark:text-slate-300">
+                    Maintenance Action:
+                  </span>{' '}
+                  <span className="text-slate-600 dark:text-slate-400">
+                    {SCENARIO_GUIDES[activeScenario].maintenance}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* ================= SECTION 3: CORE DASHBOARD GRID ================= */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          {/* LEFT 4 COLS: Virtual Pump Interface & Actuator */}
-          <div className="lg:col-span-4 flex flex-col gap-4">
-            {/* Pump Visualizer Card */}
-            <div className="bg-[#1e293b] border border-slate-700/80 rounded-xl p-4 sm:p-5 flex flex-col items-center text-center shadow-lg relative overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          {/* LEFT: 3D Virtual Pump Simulator & Actuator (5 or 12 Cols) */}
+          <div
+            className={`${
+              is3DExpanded ? 'lg:col-span-12' : 'lg:col-span-5'
+            } flex flex-col gap-5 transition-all duration-300`}
+          >
+            {/* 3D Pump Visualizer Card */}
+            <div
+              className={`rounded-2xl border p-5 shadow-xs flex flex-col transition-all relative overflow-hidden ${
+                isLight ? 'bg-white border-slate-200/90' : 'bg-[#161b22] border-slate-800'
+              }`}
+            >
               {/* Trip alert banner */}
               {isAutoShutdown && (
-                <div className="w-full bg-red-600/90 text-white font-mono font-bold text-xs py-1.5 px-3 rounded-md mb-3 animate-pulse flex items-center justify-center gap-1.5 shadow-md">
+                <div className="w-full bg-rose-600 text-white font-mono font-bold text-xs py-2 px-3 rounded-xl mb-3 flex items-center justify-center gap-2 shadow-sm animate-pulse">
                   <AlertTriangle className="w-4 h-4" />
-                  <span>EMERGENCY AUTO-SHUTDOWN ACTIVATED</span>
+                  <span>EMERGENCY AUTO-SHUTDOWN ACTIVATED · MAIN CONTACTOR OPENED</span>
                 </div>
               )}
 
-              <div className="w-full flex items-center justify-between text-xs font-mono text-slate-400 pb-2 border-b border-slate-800">
-                <span className="font-semibold text-slate-200">CENTRIFUGAL PUMP UNIT</span>
-                <span className={isAutoShutdown ? 'text-red-400 font-bold' : 'text-emerald-400'}>
-                  {isAutoShutdown ? 'TRIPPED (OFF)' : 'RUNNING (ON)'}
-                </span>
+              {/* Header with 3D/2D Switcher & Workspace Expand */}
+              <div className="w-full flex items-center justify-between text-xs font-mono pb-3 border-b border-slate-200 dark:border-slate-800 flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-slate-900 dark:text-slate-100">
+                    CENTRIFUGAL PUMP UNIT
+                  </span>
+                  <span className="text-slate-300 dark:text-slate-700">|</span>
+                  <div
+                    className={`flex items-center p-0.5 rounded-lg border ${
+                      isLight ? 'bg-slate-100 border-slate-200' : 'bg-slate-900 border-slate-700'
+                    }`}
+                  >
+                    <button
+                      onClick={() => setPumpViewMode('3d')}
+                      className={`px-2.5 py-1 text-xs rounded-md transition-all font-semibold flex items-center gap-1 ${
+                        pumpViewMode === '3d'
+                          ? 'bg-sky-600 text-white shadow-xs'
+                          : 'text-slate-500 hover:text-slate-900'
+                      }`}
+                    >
+                      <Box className="w-3.5 h-3.5" />
+                      3D Twin
+                    </button>
+                    <button
+                      onClick={() => setPumpViewMode('2d')}
+                      className={`px-2.5 py-1 text-xs rounded-md transition-all font-semibold ${
+                        pumpViewMode === '2d'
+                          ? 'bg-sky-600 text-white shadow-xs'
+                          : 'text-slate-500 hover:text-slate-900'
+                      }`}
+                    >
+                      2D Cutaway
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowManualTuning(!showManualTuning)}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold border transition-all ${
+                      showManualTuning
+                        ? 'bg-sky-50 text-sky-700 border-sky-300'
+                        : isLight
+                        ? 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}
+                    title="Toggle Manual Speed & Throttle Valve Sliders"
+                  >
+                    <Sliders className="w-3.5 h-3.5" />
+                    <span>Tuning</span>
+                  </button>
+
+                  <button
+                    onClick={() => setIs3DExpanded(!is3DExpanded)}
+                    className={`hidden lg:flex items-center gap-1 px-2 py-1 rounded-md text-xs border font-semibold ${
+                      isLight
+                        ? 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}
+                  >
+                    {is3DExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                    <span>{is3DExpanded ? 'Compact' : 'Expand'}</span>
+                  </button>
+
+                  <span
+                    className={`px-2 py-0.5 rounded-full font-bold text-[11px] ${
+                      isAutoShutdown
+                        ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                        : 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+                    }`}
+                  >
+                    {isAutoShutdown ? 'TRIPPED (OFF)' : 'RUNNING (ON)'}
+                  </span>
+                </div>
               </div>
 
-              {/* Pump Motor SVG Graphic with Dynamic Rotation */}
-              <div className="relative w-44 h-44 my-3 flex items-center justify-center">
-                <svg className="w-full h-full" viewBox="0 0 160 160">
-                  {/* Outer Mounting Bracket & Piping */}
-                  <rect x="10" y="68" width="34" height="24" fill="#0f172a" stroke="#334155" strokeWidth="2.5" />
-                  <rect x="98" y="10" width="24" height="34" fill="#0f172a" stroke="#334155" strokeWidth="2.5" />
+              {/* Manual Tuning Drawer (Sliders for RPM & Throttle Valve) */}
+              {showManualTuning && (
+                <div
+                  className={`my-3 p-3.5 rounded-xl border text-xs font-mono space-y-3 ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-200 text-slate-700'
+                      : 'bg-slate-900 border-slate-800 text-slate-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold flex items-center gap-1 text-sky-600">
+                      <Sliders className="w-3.5 h-3.5" /> Manual Interactive Controls
+                    </span>
+                    <button
+                      onClick={() => {
+                        setRpmManualOffset(0);
+                        setThrottleValvePct(100);
+                      }}
+                      className="text-[11px] text-slate-500 hover:text-sky-600 underline"
+                    >
+                      Reset Defaults
+                    </button>
+                  </div>
 
-                  {/* Fluid flow particles when running */}
-                  {!isAutoShutdown && flowRate > 0 && (
-                    <>
-                      <line x1="12" y1="80" x2="40" y2="80" stroke="#06b6d4" strokeWidth="3" className="animate-flow" />
-                      <line x1="110" y1="40" x2="110" y2="14" stroke="#06b6d4" strokeWidth="3" className="animate-flow" />
-                    </>
-                  )}
-
-                  {/* Volute / Pump Casing */}
-                  <circle
-                    cx="80"
-                    cy="80"
-                    r="56"
-                    fill="#0f172a"
-                    stroke={isAutoShutdown ? '#ef4444' : healthScore < 50 ? '#f59e0b' : '#06b6d4'}
-                    strokeWidth="4"
-                    className="transition-colors duration-500"
-                  />
-
-                  {/* Bolt pattern */}
-                  {[0, 45, 90, 135, 180, 225, 270, 315].map((ang) => {
-                    const rad = (ang * Math.PI) / 180;
-                    const bx = 80 + 46 * Math.cos(rad);
-                    const by = 80 + 46 * Math.sin(rad);
-                    return <circle key={ang} cx={bx} cy={by} r="2.5" fill="#475569" />;
-                  })}
-
-                  {/* Rotating Impeller & Drive Shaft */}
-                  <g
-                    style={{
-                      transformOrigin: '80px 80px',
-                      transform: isAutoShutdown ? 'rotate(15deg)' : undefined,
-                      animation: isAutoShutdown ? 'none' : `spinClockwise ${Math.max(0.4, 2000 / (motorRPM || 1450))}s linear infinite`
-                    }}
-                  >
-                    {/* Rotor Hub */}
-                    <circle
-                      cx="80"
-                      cy="80"
-                      r="18"
-                      fill={isAutoShutdown ? '#ef4444' : healthScore < 50 ? '#f59e0b' : '#06b6d4'}
+                  {/* Motor RPM Slider */}
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span>Operating Speed Adjustment:</span>
+                      <span className="font-bold text-slate-900 dark:text-white">
+                        {motorRPM} RPM ({rpmManualOffset >= 0 ? `+${rpmManualOffset}` : rpmManualOffset})
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-400"
+                      max="350"
+                      step="25"
+                      value={rpmManualOffset}
+                      onChange={(e) => setRpmManualOffset(parseInt(e.target.value))}
+                      className="w-full accent-sky-600 cursor-pointer"
                     />
-                    {/* Impeller Curved Vanes */}
-                    <path d="M80 32 Q92 56 80 80" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" fill="none" />
-                    <path d="M128 80 Q104 92 80 80" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" fill="none" />
-                    <path d="M80 128 Q68 104 80 80" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" fill="none" />
-                    <path d="M32 80 Q56 68 80 80" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" fill="none" />
-                  </g>
-                </svg>
+                  </div>
 
-                {/* Vibration ripple effect when vibration is high */}
-                {vibration >= 4.0 && !isAutoShutdown && (
-                  <div
-                    className={`absolute inset-0 rounded-full border-2 border-dashed pointer-events-none ${
-                      vibration > 8 ? 'border-red-500 animate-ping' : 'border-amber-400 animate-pulse'
-                    }`}
+                  {/* Throttle Valve */}
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span>Discharge Throttle Valve:</span>
+                      <span className="font-bold text-sky-600">{throttleValvePct}% OPEN</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="10"
+                      max="100"
+                      step="5"
+                      value={throttleValvePct}
+                      onChange={(e) => setThrottleValvePct(parseInt(e.target.value))}
+                      className="w-full accent-sky-600 cursor-pointer"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Viewport Area */}
+              <div className="w-full my-3">
+                {pumpViewMode === '3d' ? (
+                  <Pump3DSimulator
+                    vibration={vibration}
+                    temperature={temperature}
+                    current={current}
+                    pressure={pressure}
+                    flowRate={flowRate}
+                    motorRPM={motorRPM}
+                    healthScore={healthScore}
+                    isAutoShutdown={isAutoShutdown}
+                    activeScenario={activeScenario}
+                    theme={theme}
                   />
+                ) : (
+                  /* 2D Cutaway Schematic */
+                  <div
+                    className={`relative w-48 h-48 mx-auto flex items-center justify-center p-4 rounded-xl border ${
+                      isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                    }`}
+                  >
+                    <svg className="w-full h-full" viewBox="0 0 160 160">
+                      <rect x="10" y="68" width="34" height="24" fill="#334155" stroke="#475569" strokeWidth="2.5" />
+                      <rect x="98" y="10" width="24" height="34" fill="#334155" stroke="#475569" strokeWidth="2.5" />
+                      <circle
+                        cx="80"
+                        cy="80"
+                        r="56"
+                        fill={isLight ? '#f1f5f9' : '#0f172a'}
+                        stroke={isAutoShutdown ? '#e11d48' : healthScore < 50 ? '#d97706' : '#0284c7'}
+                        strokeWidth="4"
+                      />
+                      <g
+                        style={{
+                          transformOrigin: '80px 80px',
+                          transform: isAutoShutdown ? 'rotate(15deg)' : undefined,
+                          animation: isAutoShutdown
+                            ? 'none'
+                            : `spinClockwise ${Math.max(0.4, 2000 / (motorRPM || 1450))}s linear infinite`
+                        }}
+                      >
+                        <circle cx="80" cy="80" r="18" fill="#0284c7" />
+                        <path d="M80 32 Q92 56 80 80" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" fill="none" />
+                        <path d="M128 80 Q104 92 80 80" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" fill="none" />
+                        <path d="M80 128 Q68 104 80 80" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" fill="none" />
+                        <path d="M32 80 Q56 68 80 80" stroke="#ffffff" strokeWidth="4" strokeLinecap="round" fill="none" />
+                      </g>
+                    </svg>
+                  </div>
                 )}
               </div>
 
               {/* Dynamic Operational Readout */}
-              <div className="w-full grid grid-cols-2 gap-2 mt-2 pt-3 border-t border-slate-800 text-xs font-mono">
-                <div className="p-2 rounded bg-slate-900/80 border border-slate-800">
-                  <div className="text-[10px] text-slate-400">OPERATING SPEED</div>
-                  <div className="text-base font-bold text-white tabular-nums">
-                    {motorRPM} <span className="text-[10px] text-slate-400">RPM</span>
+              <div className="w-full grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-2 pt-3 border-t border-slate-200 dark:border-slate-800 text-xs font-mono">
+                <div
+                  className={`p-2.5 rounded-xl border ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}
+                >
+                  <div className="text-[10px] font-bold text-slate-500">SPEED (RPM)</div>
+                  <div className="text-base font-bold text-slate-900 dark:text-white tabular-nums">
+                    {motorRPM}
                   </div>
                 </div>
-                <div className="p-2 rounded bg-slate-900/80 border border-slate-800">
-                  <div className="text-[10px] text-slate-400">EFFICIENCY (BEP)</div>
-                  <div className="text-base font-bold text-cyan-400 tabular-nums">
+                <div
+                  className={`p-2.5 rounded-xl border ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}
+                >
+                  <div className="text-[10px] font-bold text-slate-500">BEP EFFICIENCY</div>
+                  <div className="text-base font-bold text-sky-600 tabular-nums">
                     {isAutoShutdown ? '0%' : `${Math.max(45, Math.round(94.2 - (100 - healthScore) * 0.45))}%`}
+                  </div>
+                </div>
+                <div
+                  className={`p-2.5 rounded-xl border ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}
+                >
+                  <div className="text-[10px] font-bold text-slate-500">VIBRATION</div>
+                  <div className={`text-base font-bold tabular-nums ${vibration > 4 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                    {vibration.toFixed(2)} mm/s
+                  </div>
+                </div>
+                <div
+                  className={`p-2.5 rounded-xl border ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}
+                >
+                  <div className="text-[10px] font-bold text-slate-500">BEARING TEMP</div>
+                  <div className={`text-base font-bold tabular-nums ${temperature > 60 ? 'text-rose-600' : 'text-sky-600'}`}>
+                    {temperature.toFixed(1)} °C
                   </div>
                 </div>
               </div>
 
               {/* Status Action Banner */}
-              <div className="w-full mt-3 p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between text-xs">
-                <span className="text-slate-400">Control State:</span>
-                <span className={`font-mono font-bold ${healthMeta.text}`}>
-                  {isAutoShutdown ? 'EMERGENCY SHUTOFF' : activeScenario === 'NORMAL' ? 'NOMINAL CONTINUOUS' : 'ANOMALY DETECTED'}
-                </span>
+              <div
+                className={`w-full mt-3 p-3 rounded-xl border flex items-center justify-between text-xs flex-wrap gap-2 ${
+                  isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 font-medium">Control State:</span>
+                  <span className={`font-mono font-bold ${healthMeta.text}`}>
+                    {isAutoShutdown
+                      ? 'EMERGENCY SHUTOFF'
+                      : activeScenario === 'NORMAL'
+                      ? 'NOMINAL CONTINUOUS'
+                      : 'ANOMALY DETECTED'}
+                  </span>
+                </div>
+
+                {isAutoShutdown ? (
+                  <button
+                    onClick={() => {
+                      setIsAutoShutdown(false);
+                      setDryRunTimer(0);
+                      switchScenario('NORMAL');
+                    }}
+                    className="px-3 py-1 text-xs font-mono font-bold bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-all shadow-xs"
+                  >
+                    Reset Trip &amp; Restart
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setIsAutoShutdown(true);
+                      playChime(1040, 0.5);
+                    }}
+                    className="px-2.5 py-1 text-[11px] font-mono bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg transition-all font-semibold"
+                  >
+                    Emergency Trip Test
+                  </button>
+                )}
               </div>
             </div>
 
             {/* AI Health Score Gauge Card */}
-            <div className="bg-[#1e293b] border border-slate-700/80 rounded-xl p-4 sm:p-5 flex flex-col items-center text-center shadow-lg">
-              <div className="w-full flex items-center justify-between pb-2 border-b border-slate-800 text-xs font-mono">
-                <span className="font-semibold text-slate-200">AI HEALTH SCORE</span>
-                <span className="text-cyan-400">Weighted TinyML</span>
+            <div
+              className={`rounded-2xl border p-5 shadow-xs flex flex-col items-center text-center transition-all ${
+                isLight ? 'bg-white border-slate-200/90' : 'bg-[#161b22] border-slate-800'
+              }`}
+            >
+              <div className="w-full flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800 text-xs font-mono">
+                <span className="font-bold text-slate-800 dark:text-slate-200">AI HEALTH SCORE</span>
+                <span className="text-sky-600 font-semibold">Weighted TinyML</span>
               </div>
 
               {/* Circular Gauge */}
-              <div className="relative w-36 h-36 my-3 flex items-center justify-center">
+              <div className="relative w-36 h-36 my-4 flex items-center justify-center">
                 <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
-                  <circle cx="60" cy="60" r="50" fill="none" stroke="#0f172a" strokeWidth="10" />
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="50"
+                    fill="none"
+                    stroke={isLight ? '#f1f5f9' : '#0f172a'}
+                    strokeWidth="10"
+                  />
                   <circle
                     cx="60"
                     cy="60"
@@ -1062,7 +1376,7 @@ export default function App() {
                 </svg>
 
                 <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                  <span className="text-3xl font-black font-mono tracking-tight tabular-nums text-white">
+                  <span className="text-4xl font-black font-mono tracking-tight tabular-nums text-slate-900 dark:text-white">
                     {healthScore}
                   </span>
                   <span className="text-[10px] font-mono uppercase tracking-widest text-slate-400 font-bold">
@@ -1072,72 +1386,89 @@ export default function App() {
               </div>
 
               {/* Status Badge */}
-              <div className={`px-3 py-1 rounded-full border text-xs font-bold font-mono uppercase tracking-wider ${healthMeta.bg} ${healthMeta.text} ${healthMeta.border}`}>
+              <div
+                className={`px-3 py-1 rounded-full border text-xs font-bold font-mono uppercase tracking-wider ${healthMeta.bg} ${healthMeta.text} ${healthMeta.border}`}
+              >
                 {healthMeta.label} · {healthMeta.action}
               </div>
 
-              <div className="w-full mt-4 text-[11px] font-mono text-slate-400 bg-slate-900/60 p-2.5 rounded-lg border border-slate-800 text-left">
+              {/* Weights Table */}
+              <div
+                className={`w-full mt-4 text-[11px] font-mono p-3 rounded-xl border text-left space-y-1 ${
+                  isLight
+                    ? 'bg-slate-50 border-slate-200 text-slate-600'
+                    : 'bg-slate-900/60 border-slate-800 text-slate-400'
+                }`}
+              >
                 <div className="flex justify-between">
-                  <span>Vibration Weight:</span> <span className="text-slate-200">35%</span>
+                  <span>Vibration (ADXL345):</span> <span className="font-semibold text-slate-800 dark:text-slate-200">35%</span>
                 </div>
-                <div className="flex justify-between mt-1">
-                  <span>Thermal Weight:</span> <span className="text-slate-200">25%</span>
+                <div className="flex justify-between">
+                  <span>Thermal (PT100 RTD):</span> <span className="font-semibold text-slate-800 dark:text-slate-200">25%</span>
                 </div>
-                <div className="flex justify-between mt-1">
-                  <span>Hydraulic/Pressure:</span> <span className="text-slate-200">20%</span>
+                <div className="flex justify-between">
+                  <span>Hydraulic Head (Pressure/Q):</span> <span className="font-semibold text-slate-800 dark:text-slate-200">20%</span>
                 </div>
-                <div className="flex justify-between mt-1">
-                  <span>Current/Electrical:</span> <span className="text-slate-200">20%</span>
+                <div className="flex justify-between">
+                  <span>Electrical (Current CT):</span> <span className="font-semibold text-slate-800 dark:text-slate-200">20%</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* CENTER 4 COLS: Real-Time Sensor Telemetry (5 Cards) */}
-          <div className="lg:col-span-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between pb-1 border-b border-slate-800">
-              <h3 className="text-xs font-bold font-mono tracking-wider uppercase text-slate-400 flex items-center gap-1.5">
-                <Gauge className="w-3.5 h-3.5 text-cyan-400" />
-                Live Sensor Readouts (5 Channels)
+          {/* CENTER: 5 Real-Time Sensor Cards (4 Cols) */}
+          <div
+            className={`${
+              is3DExpanded ? 'lg:col-span-6' : 'lg:col-span-4'
+            } flex flex-col gap-3.5`}
+          >
+            <div className="flex items-center justify-between pb-1">
+              <h3 className="text-xs font-bold font-mono tracking-wider uppercase text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Gauge className="w-4 h-4 text-sky-600" />
+                Live Sensor Telemetry (5 Channels)
               </h3>
-              <span className="text-[10px] font-mono text-slate-500">Scan: 2.0s</span>
+              <span className="text-[10px] font-mono text-slate-400">Scan: 1.5s</span>
             </div>
 
             {/* Sensor 1: Vibration */}
             <div
-              className={`p-3 rounded-xl border transition-all ${
+              className={`p-3.5 rounded-2xl border transition-all ${
                 getVibrationStatus() === 'critical'
-                  ? 'bg-red-950/25 border-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.25)]'
+                  ? 'bg-rose-50 border-rose-400 shadow-xs'
                   : getVibrationStatus() === 'warning'
-                  ? 'bg-amber-950/25 border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.2)]'
-                  : 'bg-[#1e293b] border-slate-700/80 hover:border-slate-600'
+                  ? 'bg-amber-50 border-amber-300 shadow-xs'
+                  : isLight
+                  ? 'bg-white border-slate-200/90 shadow-xs hover:border-slate-300'
+                  : 'bg-[#161b22] border-slate-800'
               }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                  <div className="p-1.5 rounded-lg bg-sky-50 text-sky-600 border border-sky-100">
                     <Activity className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-semibold text-slate-200">Vibration Velocity</div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white">
+                      Vibration Velocity
+                    </div>
                     <div className="text-[10px] font-mono text-slate-400">ADXL345 · ISO 10816</div>
                   </div>
                 </div>
                 <span
-                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border uppercase ${
+                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border uppercase ${
                     getVibrationStatus() === 'critical'
-                      ? 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse'
+                      ? 'bg-rose-100 text-rose-700 border-rose-300 animate-pulse'
                       : getVibrationStatus() === 'warning'
-                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                      : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-emerald-100 text-emerald-700 border-emerald-200'
                   }`}
                 >
                   {getVibrationStatus()}
                 </span>
               </div>
 
-              <div className="mt-2 flex items-baseline justify-between">
-                <div className="text-2xl font-bold font-mono text-white tabular-nums">
+              <div className="mt-2.5 flex items-baseline justify-between">
+                <div className="text-2xl font-black font-mono text-slate-900 dark:text-white tabular-nums">
                   {vibration.toFixed(2)}
                   <span className="text-xs font-mono text-slate-400 ml-1 font-normal">mm/s</span>
                 </div>
@@ -1146,51 +1477,59 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-1.5 pt-1 border-t border-slate-800/80">
+              <div className="mt-2 pt-1 border-t border-slate-100 dark:border-slate-800">
                 {renderSparkline(
                   historyVib,
                   0,
                   12,
-                  getVibrationStatus() === 'critical' ? '#ef4444' : getVibrationStatus() === 'warning' ? '#f59e0b' : '#10b981'
+                  getVibrationStatus() === 'critical'
+                    ? '#e11d48'
+                    : getVibrationStatus() === 'warning'
+                    ? '#d97706'
+                    : '#0284c7'
                 )}
               </div>
             </div>
 
             {/* Sensor 2: Temperature */}
             <div
-              className={`p-3 rounded-xl border transition-all ${
+              className={`p-3.5 rounded-2xl border transition-all ${
                 getTemperatureStatus() === 'critical'
-                  ? 'bg-red-950/25 border-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.25)]'
+                  ? 'bg-rose-50 border-rose-400 shadow-xs'
                   : getTemperatureStatus() === 'warning'
-                  ? 'bg-amber-950/25 border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.2)]'
-                  : 'bg-[#1e293b] border-slate-700/80 hover:border-slate-600'
+                  ? 'bg-amber-50 border-amber-300 shadow-xs'
+                  : isLight
+                  ? 'bg-white border-slate-200/90 shadow-xs hover:border-slate-300'
+                  : 'bg-[#161b22] border-slate-800'
               }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded bg-orange-500/10 border border-orange-500/20 text-orange-400">
+                  <div className="p-1.5 rounded-lg bg-orange-50 text-orange-600 border border-orange-100">
                     <Flame className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-semibold text-slate-200">Bearing Temperature</div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white">
+                      Bearing Temperature
+                    </div>
                     <div className="text-[10px] font-mono text-slate-400">PT100 RTD Sensor</div>
                   </div>
                 </div>
                 <span
-                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border uppercase ${
+                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border uppercase ${
                     getTemperatureStatus() === 'critical'
-                      ? 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse'
+                      ? 'bg-rose-100 text-rose-700 border-rose-300 animate-pulse'
                       : getTemperatureStatus() === 'warning'
-                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                      : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-emerald-100 text-emerald-700 border-emerald-200'
                   }`}
                 >
                   {getTemperatureStatus()}
                 </span>
               </div>
 
-              <div className="mt-2 flex items-baseline justify-between">
-                <div className="text-2xl font-bold font-mono text-white tabular-nums">
+              <div className="mt-2.5 flex items-baseline justify-between">
+                <div className="text-2xl font-black font-mono text-slate-900 dark:text-white tabular-nums">
                   {temperature.toFixed(1)}
                   <span className="text-xs font-mono text-slate-400 ml-1 font-normal">°C</span>
                 </div>
@@ -1199,51 +1538,59 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-1.5 pt-1 border-t border-slate-800/80">
+              <div className="mt-2 pt-1 border-t border-slate-100 dark:border-slate-800">
                 {renderSparkline(
                   historyTemp,
                   20,
                   95,
-                  getTemperatureStatus() === 'critical' ? '#ef4444' : getTemperatureStatus() === 'warning' ? '#f59e0b' : '#10b981'
+                  getTemperatureStatus() === 'critical'
+                    ? '#e11d48'
+                    : getTemperatureStatus() === 'warning'
+                    ? '#d97706'
+                    : '#ea580c'
                 )}
               </div>
             </div>
 
             {/* Sensor 3: Current */}
             <div
-              className={`p-3 rounded-xl border transition-all ${
+              className={`p-3.5 rounded-2xl border transition-all ${
                 getCurrentStatus() === 'critical'
-                  ? 'bg-red-950/25 border-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.25)]'
+                  ? 'bg-rose-50 border-rose-400 shadow-xs'
                   : getCurrentStatus() === 'warning'
-                  ? 'bg-amber-950/25 border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.2)]'
-                  : 'bg-[#1e293b] border-slate-700/80 hover:border-slate-600'
+                  ? 'bg-amber-50 border-amber-300 shadow-xs'
+                  : isLight
+                  ? 'bg-white border-slate-200/90 shadow-xs hover:border-slate-300'
+                  : 'bg-[#161b22] border-slate-800'
               }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded bg-yellow-500/10 border border-yellow-500/20 text-yellow-400">
+                  <div className="p-1.5 rounded-lg bg-amber-50 text-amber-600 border border-amber-100">
                     <Zap className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-semibold text-slate-200">Motor Load Current</div>
-                    <div className="text-[10px] font-mono text-slate-400">Hall Current CT Transducer</div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white">
+                      Motor Load Current
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-400">Hall CT Transducer</div>
                   </div>
                 </div>
                 <span
-                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border uppercase ${
+                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border uppercase ${
                     getCurrentStatus() === 'critical'
-                      ? 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse'
+                      ? 'bg-rose-100 text-rose-700 border-rose-300 animate-pulse'
                       : getCurrentStatus() === 'warning'
-                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                      : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-emerald-100 text-emerald-700 border-emerald-200'
                   }`}
                 >
                   {getCurrentStatus()}
                 </span>
               </div>
 
-              <div className="mt-2 flex items-baseline justify-between">
-                <div className="text-2xl font-bold font-mono text-white tabular-nums">
+              <div className="mt-2.5 flex items-baseline justify-between">
+                <div className="text-2xl font-black font-mono text-slate-900 dark:text-white tabular-nums">
                   {current.toFixed(2)}
                   <span className="text-xs font-mono text-slate-400 ml-1 font-normal">AMPS</span>
                 </div>
@@ -1252,47 +1599,55 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-1.5 pt-1 border-t border-slate-800/80">
+              <div className="mt-2 pt-1 border-t border-slate-100 dark:border-slate-800">
                 {renderSparkline(
                   historyCurr,
                   0,
                   20,
-                  getCurrentStatus() === 'critical' ? '#ef4444' : getCurrentStatus() === 'warning' ? '#f59e0b' : '#10b981'
+                  getCurrentStatus() === 'critical'
+                    ? '#e11d48'
+                    : getCurrentStatus() === 'warning'
+                    ? '#d97706'
+                    : '#ca8a04'
                 )}
               </div>
             </div>
 
             {/* Sensor 4: Pressure */}
             <div
-              className={`p-3 rounded-xl border transition-all ${
+              className={`p-3.5 rounded-2xl border transition-all ${
                 getPressureStatus() === 'warning'
-                  ? 'bg-amber-950/25 border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.2)]'
-                  : 'bg-[#1e293b] border-slate-700/80 hover:border-slate-600'
+                  ? 'bg-amber-50 border-amber-300 shadow-xs'
+                  : isLight
+                  ? 'bg-white border-slate-200/90 shadow-xs hover:border-slate-300'
+                  : 'bg-[#161b22] border-slate-800'
               }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+                  <div className="p-1.5 rounded-lg bg-cyan-50 text-cyan-600 border border-cyan-100">
                     <Gauge className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-semibold text-slate-200">Discharge Pressure</div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white">
+                      Discharge Head Pressure
+                    </div>
                     <div className="text-[10px] font-mono text-slate-400">Piezoresistive 4-20mA</div>
                   </div>
                 </div>
                 <span
-                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border uppercase ${
+                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border uppercase ${
                     getPressureStatus() === 'warning'
-                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                      : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-emerald-100 text-emerald-700 border-emerald-200'
                   }`}
                 >
                   {getPressureStatus()}
                 </span>
               </div>
 
-              <div className="mt-2 flex items-baseline justify-between">
-                <div className="text-2xl font-bold font-mono text-white tabular-nums">
+              <div className="mt-2.5 flex items-baseline justify-between">
+                <div className="text-2xl font-black font-mono text-slate-900 dark:text-white tabular-nums">
                   {pressure.toFixed(2)}
                   <span className="text-xs font-mono text-slate-400 ml-1 font-normal">BAR</span>
                 </div>
@@ -1301,51 +1656,55 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-1.5 pt-1 border-t border-slate-800/80">
+              <div className="mt-2 pt-1 border-t border-slate-100 dark:border-slate-800">
                 {renderSparkline(
                   historyPress,
                   0,
                   7.0,
-                  getPressureStatus() === 'warning' ? '#f59e0b' : '#10b981'
+                  getPressureStatus() === 'warning' ? '#d97706' : '#0891b2'
                 )}
               </div>
             </div>
 
             {/* Sensor 5: Flow Rate */}
             <div
-              className={`p-3 rounded-xl border transition-all ${
+              className={`p-3.5 rounded-2xl border transition-all ${
                 getFlowStatus() === 'critical'
-                  ? 'bg-red-950/25 border-red-500/50 shadow-[0_0_16px_rgba(239,68,68,0.25)]'
+                  ? 'bg-rose-50 border-rose-400 shadow-xs'
                   : getFlowStatus() === 'warning'
-                  ? 'bg-amber-950/25 border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.2)]'
-                  : 'bg-[#1e293b] border-slate-700/80 hover:border-slate-600'
+                  ? 'bg-amber-50 border-amber-300 shadow-xs'
+                  : isLight
+                  ? 'bg-white border-slate-200/90 shadow-xs hover:border-slate-300'
+                  : 'bg-[#161b22] border-slate-800'
               }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                  <div className="p-1.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">
                     <Droplets className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-semibold text-slate-200">Volumetric Flow Rate</div>
+                    <div className="text-xs font-bold text-slate-900 dark:text-white">
+                      Volumetric Flow Rate
+                    </div>
                     <div className="text-[10px] font-mono text-slate-400">Magnetic Flowmeter</div>
                   </div>
                 </div>
                 <span
-                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border uppercase ${
+                  className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border uppercase ${
                     getFlowStatus() === 'critical'
-                      ? 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse'
+                      ? 'bg-rose-100 text-rose-700 border-rose-300 animate-pulse'
                       : getFlowStatus() === 'warning'
-                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                      : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-emerald-100 text-emerald-700 border-emerald-200'
                   }`}
                 >
                   {getFlowStatus()}
                 </span>
               </div>
 
-              <div className="mt-2 flex items-baseline justify-between">
-                <div className="text-2xl font-bold font-mono text-white tabular-nums">
+              <div className="mt-2.5 flex items-baseline justify-between">
+                <div className="text-2xl font-black font-mono text-slate-900 dark:text-white tabular-nums">
                   {Math.round(flowRate)}
                   <span className="text-xs font-mono text-slate-400 ml-1 font-normal">L/MIN</span>
                 </div>
@@ -1354,169 +1713,202 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="mt-1.5 pt-1 border-t border-slate-800/80">
+              <div className="mt-2 pt-1 border-t border-slate-100 dark:border-slate-800">
                 {renderSparkline(
                   historyFlow,
                   0,
                   180,
-                  getFlowStatus() === 'critical' ? '#ef4444' : getFlowStatus() === 'warning' ? '#f59e0b' : '#10b981'
+                  getFlowStatus() === 'critical'
+                    ? '#e11d48'
+                    : getFlowStatus() === 'warning'
+                    ? '#d97706'
+                    : '#16a34a'
                 )}
               </div>
             </div>
           </div>
 
-          {/* RIGHT 4 COLS: Digital Twin & Alert Recommendations */}
-          <div className="lg:col-span-4 flex flex-col gap-4">
-            {/* Digital Twin Visualization Card */}
-            <div className="bg-[#1e293b] border border-slate-700/80 rounded-xl p-4 sm:p-5 shadow-lg relative digital-twin-grid">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-700/80">
-                <div className="flex items-center gap-1.5">
-                  <Cpu className="w-4 h-4 text-cyan-400" />
-                  <h3 className="text-xs font-bold font-mono tracking-wider uppercase text-slate-200">
+          {/* RIGHT: Digital Twin & Maintenance Recommendations (3 or 6 Cols) */}
+          <div
+            className={`${
+              is3DExpanded ? 'lg:col-span-6' : 'lg:col-span-3'
+            } flex flex-col gap-5`}
+          >
+            {/* Digital Twin Telemetry Card */}
+            <div
+              className={`rounded-2xl border p-5 shadow-xs transition-all ${
+                isLight ? 'bg-white border-slate-200/90' : 'bg-[#161b22] border-slate-800'
+              }`}
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <Cpu className="w-4 h-4 text-sky-600" />
+                  <h3 className="text-xs font-bold font-mono tracking-wider uppercase text-slate-800 dark:text-slate-200">
                     Digital Twin Telemetry
                   </h3>
                 </div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800 text-cyan-300 font-bold">
-                  SYNCED (1:1)
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-sky-100 text-sky-800 font-bold border border-sky-200">
+                  SYNCED 1:1
                 </span>
               </div>
 
-              {/* Side-by-Side: Physical Pump vs Digital Twin */}
-              <div className="grid grid-cols-2 gap-3 my-3">
-                {/* Physical Pump Box */}
-                <div className="p-3 rounded-lg bg-slate-900/90 border border-slate-800 text-center">
-                  <div className="text-[11px] font-mono text-slate-400 uppercase font-semibold mb-1">
+              {/* Physical vs Twin Boxes */}
+              <div className="grid grid-cols-2 gap-2.5 my-3.5">
+                <div
+                  className={`p-3 rounded-xl border text-center ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}
+                >
+                  <div className="text-[10px] font-mono text-slate-500 uppercase font-bold mb-1">
                     Physical Asset
                   </div>
-                  <div className="text-xs font-bold text-slate-200">Crompton CP-300</div>
-                  <div className="text-[10px] text-slate-500 font-mono mt-0.5">S/N: 2026-IND-0941</div>
-                  <div className="mt-2 text-xs font-mono">
-                    <span className="text-slate-400">State: </span>
-                    <span className={healthMeta.text}>{healthMeta.label}</span>
-                  </div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-white">CP-300 #4</div>
+                  <div className="text-[10px] text-slate-400 font-mono mt-0.5">S/N: 2026-IND-0941</div>
                 </div>
 
-                {/* Digital Twin Box */}
-                <div className="p-3 rounded-lg bg-cyan-950/30 border border-cyan-500/40 text-center relative overflow-hidden">
-                  <div className="text-[11px] font-mono text-cyan-400 uppercase font-semibold mb-1 flex items-center justify-center gap-1">
-                    <span>Digital Twin</span>
-                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+                <div
+                  className={`p-3 rounded-xl border text-center ${
+                    isLight
+                      ? 'bg-sky-50/70 border-sky-200 text-sky-900'
+                      : 'bg-cyan-950/40 border-cyan-700 text-cyan-200'
+                  }`}
+                >
+                  <div className="text-[10px] font-mono text-sky-600 dark:text-cyan-400 uppercase font-bold mb-1 flex items-center justify-center gap-1">
+                    <span>LSTM Twin</span>
+                    <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-ping" />
                   </div>
-                  <div className="text-xs font-bold text-cyan-200">LSTM RUL Model</div>
-                  <div className="text-[10px] text-cyan-400/80 font-mono mt-0.5">Physics + ML Sync</div>
-                  <div className="mt-2 text-xs font-mono text-cyan-300">
+                  <div className="text-xs font-bold">RUL Forecast</div>
+                  <div className="text-[10px] text-sky-600 dark:text-cyan-400 font-mono mt-0.5">
                     Confidence: <b>{digitalTwinMetrics.confidence}%</b>
                   </div>
                 </div>
               </div>
 
-              {/* Twin Telemetry Stats */}
-              <div className="space-y-2.5 text-xs font-mono pt-1">
-                {/* Failure Probability */}
-                <div className="p-2.5 rounded bg-slate-900/80 border border-slate-800">
+              {/* Failure Probability Progress Bar */}
+              <div className="space-y-3 text-xs font-mono">
+                <div>
                   <div className="flex justify-between items-center mb-1">
-                    <span className="text-slate-400">Predicted Failure Probability:</span>
+                    <span className="text-slate-500">Predicted Failure Prob:</span>
                     <span
                       className={`font-bold tabular-nums ${
                         digitalTwinMetrics.failProb > 50
-                          ? 'text-red-400'
+                          ? 'text-rose-600'
                           : digitalTwinMetrics.failProb > 20
-                          ? 'text-amber-400'
-                          : 'text-emerald-400'
+                          ? 'text-amber-600'
+                          : 'text-emerald-600'
                       }`}
                     >
                       {digitalTwinMetrics.failProb}%
                     </span>
                   </div>
-                  <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                  <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                     <div
                       className={`h-full transition-all duration-500 ${
                         digitalTwinMetrics.failProb > 50
-                          ? 'bg-red-500'
+                          ? 'bg-rose-500'
                           : digitalTwinMetrics.failProb > 20
-                          ? 'bg-amber-400'
-                          : 'bg-emerald-400'
+                          ? 'bg-amber-500'
+                          : 'bg-emerald-500'
                       }`}
                       style={{ width: `${digitalTwinMetrics.failProb}%` }}
                     />
                   </div>
                 </div>
 
-                {/* Remaining Useful Life (RUL) */}
-                <div className="p-2.5 rounded bg-slate-900/80 border border-slate-800 flex items-center justify-between">
-                  <div>
-                    <div className="text-slate-400">Remaining Useful Life (RUL):</div>
-                    <div className="text-[10px] text-slate-500 font-mono">Degradation Curve Projection</div>
-                  </div>
-                  <div className="text-right">
-                    <div
-                      className={`text-lg font-bold tabular-nums ${
-                        digitalTwinMetrics.rulDays < 10
-                          ? 'text-red-400'
-                          : digitalTwinMetrics.rulDays < 30
-                          ? 'text-amber-400'
-                          : 'text-cyan-400'
-                      }`}
-                    >
-                      {digitalTwinMetrics.rulDays} <span className="text-xs font-normal">DAYS</span>
-                    </div>
-                  </div>
+                {/* RUL Countdown */}
+                <div
+                  className={`p-3 rounded-xl border flex items-center justify-between ${
+                    isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                  }`}
+                >
+                  <span className="text-slate-500 font-medium">Remaining Useful Life:</span>
+                  <span
+                    className={`font-mono font-bold text-sm tabular-nums ${
+                      digitalTwinMetrics.rulDays <= 7
+                        ? 'text-rose-600'
+                        : digitalTwinMetrics.rulDays <= 30
+                        ? 'text-amber-600'
+                        : 'text-emerald-600'
+                    }`}
+                  >
+                    {isAutoShutdown ? '0 DAYS' : `${digitalTwinMetrics.rulDays} DAYS`}
+                  </span>
                 </div>
               </div>
             </div>
 
-            {/* Alert & AI Recommendations Panel */}
-            <div className="bg-[#1e293b] border border-slate-700/80 rounded-xl p-4 flex flex-col flex-1 shadow-lg max-h-[380px]">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-700/80 mb-2">
-                <div className="flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4 text-amber-400" />
-                  <h3 className="text-xs font-bold font-mono tracking-wider uppercase text-slate-200">
-                    Live Alerts &amp; AI Directives
+            {/* Predictive Maintenance & Alarms Stream */}
+            <div
+              className={`rounded-2xl border p-5 shadow-xs flex-1 flex flex-col transition-all ${
+                isLight ? 'bg-white border-slate-200/90' : 'bg-[#161b22] border-slate-800'
+              }`}
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-sky-600" />
+                  <h3 className="text-xs font-bold font-mono tracking-wider uppercase text-slate-800 dark:text-slate-200">
+                    Alarms &amp; Diagnostics ({alerts.length})
                   </h3>
                 </div>
-                <button
-                  onClick={() => setAlerts([])}
-                  className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors text-xs"
-                  title="Clear alert feed"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-              </div>
 
-              {/* Alerts Stream */}
-              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1 font-mono text-xs">
-                {alerts.length === 0 ? (
-                  <div className="text-center py-8 text-slate-500 text-xs">
-                    No active alerts in buffer.
-                  </div>
-                ) : (
-                  alerts.map((alert) => (
-                    <div
-                      key={alert.id}
-                      className={`p-2.5 rounded-lg border transition-all ${
-                        alert.severity === 'critical'
-                          ? 'bg-red-950/30 border-red-500/50 text-red-200'
-                          : alert.severity === 'warning'
-                          ? 'bg-amber-950/30 border-amber-500/40 text-amber-200'
-                          : 'bg-slate-900/80 border-slate-800 text-slate-300'
+                {/* Filter pills */}
+                <div className="flex items-center gap-1 text-[10px] font-mono">
+                  {(['all', 'critical', 'warning'] as const).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setAlertFilter(f)}
+                      className={`px-2 py-0.5 rounded capitalize ${
+                        alertFilter === f
+                          ? 'bg-sky-100 text-sky-700 font-bold'
+                          : 'text-slate-400 hover:text-slate-700'
                       }`}
                     >
-                      <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-                        <span className="tabular-nums">[{alert.timestamp}]</span>
+                      {f}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Alert Feed List */}
+              <div className="mt-3 space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                {filteredAlerts.length === 0 ? (
+                  <div className="text-center py-6 text-xs text-slate-400 font-mono">
+                    No alarms in this category.
+                  </div>
+                ) : (
+                  filteredAlerts.map((alert) => (
+                    <div
+                      key={alert.id}
+                      className={`p-3 rounded-xl border text-xs font-mono transition-all ${
+                        alert.severity === 'critical'
+                          ? 'bg-rose-50 border-rose-200 text-rose-900'
+                          : alert.severity === 'warning'
+                          ? 'bg-amber-50 border-amber-200 text-amber-900'
+                          : isLight
+                          ? 'bg-slate-50 border-slate-200 text-slate-800'
+                          : 'bg-slate-900 border-slate-800 text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-[10px] mb-1">
+                        <span className="text-slate-400 tabular-nums">[{alert.timestamp}]</span>
                         <span
                           className={`font-bold uppercase px-1.5 py-0.5 rounded text-[9px] ${
                             alert.severity === 'critical'
-                              ? 'bg-red-500/20 text-red-400'
+                              ? 'bg-rose-100 text-rose-700'
                               : alert.severity === 'warning'
-                              ? 'bg-amber-500/20 text-amber-400'
-                              : 'bg-cyan-500/20 text-cyan-400'
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-sky-100 text-sky-700'
                           }`}
                         >
                           {alert.severity}
                         </span>
                       </div>
-                      <div className="font-semibold text-white mb-0.5">{alert.title}</div>
-                      <div className="text-[11px] text-slate-400 leading-snug">{alert.recommendation}</div>
+                      <div className="font-bold text-slate-900 dark:text-white mb-0.5">
+                        {alert.title}
+                      </div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-400 leading-snug">
+                        {alert.recommendation}
+                      </div>
                     </div>
                   ))
                 )}
@@ -1526,33 +1918,43 @@ export default function App() {
           </div>
         </div>
 
-        {/* ================= SECTION 4: HISTORICAL GRAPH (LAST 60 SECONDS) ================= */}
-        <section className="bg-[#1e293b] border border-slate-700/80 rounded-xl p-4 sm:p-5 shadow-lg">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-700/80 mb-3 gap-2">
+        {/* ================= SECTION 4: 60-SECOND TIME-SERIES TREND ================= */}
+        <section
+          className={`rounded-2xl border p-5 shadow-xs transition-all ${
+            isLight ? 'bg-white border-slate-200/90' : 'bg-[#161b22] border-slate-800'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800 mb-3 gap-2">
             <div className="flex items-center gap-2">
-              <Activity className="w-4 h-4 text-cyan-400" />
-              <h3 className="text-xs font-bold font-mono tracking-wider uppercase text-slate-200">
+              <TrendingUp className="w-4 h-4 text-sky-600" />
+              <h3 className="text-xs font-bold font-mono tracking-wider uppercase text-slate-800 dark:text-slate-200">
                 Time-Series Trend History (Last 60 Seconds Buffer)
               </h3>
             </div>
 
             {/* Metric Selector Tabs */}
-            <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800 text-xs font-mono overflow-x-auto">
+            <div
+              className={`flex items-center p-0.5 rounded-xl border text-xs font-mono overflow-x-auto ${
+                isLight ? 'bg-slate-100 border-slate-200' : 'bg-slate-900 border-slate-800'
+              }`}
+            >
               {(
                 [
-                  { id: 'vibration', label: 'Vib (mm/s)' },
+                  { id: 'vibration', label: 'Vibration (mm/s)' },
                   { id: 'temperature', label: 'Temp (°C)' },
                   { id: 'current', label: 'Current (A)' },
                   { id: 'pressure', label: 'Pressure (bar)' },
-                  { id: 'flow', label: 'Flow (L/m)' }
+                  { id: 'flow', label: 'Flow (L/min)' }
                 ] as const
               ).map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setSelectedChartMetric(tab.id)}
-                  className={`px-2.5 py-1 rounded transition-colors whitespace-nowrap ${
+                  className={`px-3 py-1 rounded-lg transition-colors whitespace-nowrap font-medium ${
                     selectedChartMetric === tab.id
-                      ? 'bg-cyan-600 text-white font-bold'
+                      ? 'bg-sky-600 text-white font-bold shadow-xs'
+                      : isLight
+                      ? 'text-slate-600 hover:text-slate-900'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
@@ -1563,150 +1965,130 @@ export default function App() {
           </div>
 
           {/* Canvas Chart Area */}
-          <div className="w-full h-36 bg-[#0f172a] rounded-lg p-3 border border-slate-800 flex flex-col justify-between relative overflow-hidden">
-            {/* Grid coordinate lines */}
-            <div className="absolute inset-0 flex flex-col justify-between p-3 pointer-events-none opacity-20">
-              <div className="w-full border-b border-slate-700" />
-              <div className="w-full border-b border-slate-700" />
-              <div className="w-full border-b border-slate-700" />
+          <div
+            className={`w-full h-36 rounded-xl p-4 border flex flex-col justify-between relative overflow-hidden ${
+              isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#0f172a] border-slate-800'
+            }`}
+          >
+            {/* Grid Coordinate Lines */}
+            <div className="absolute inset-0 flex flex-col justify-between p-4 pointer-events-none opacity-40">
+              <div className="w-full border-b border-slate-200 dark:border-slate-800" />
+              <div className="w-full border-b border-slate-200 dark:border-slate-800" />
+              <div className="w-full border-b border-slate-200 dark:border-slate-800" />
             </div>
 
             {/* Dynamic Active Trend Curve */}
             <div className="w-full h-full relative z-10 flex items-center">
-              {selectedChartMetric === 'vibration' && renderSparkline(historyVib, 0, 12, '#38bdf8')}
-              {selectedChartMetric === 'temperature' && renderSparkline(historyTemp, 20, 95, '#fb923c')}
-              {selectedChartMetric === 'current' && renderSparkline(historyCurr, 0, 20, '#facc15')}
-              {selectedChartMetric === 'pressure' && renderSparkline(historyPress, 0, 7, '#06b6d4')}
-              {selectedChartMetric === 'flow' && renderSparkline(historyFlow, 0, 180, '#4ade80')}
+              {selectedChartMetric === 'vibration' &&
+                renderSparkline(historyVib, 0, 12, isLight ? '#0284c7' : '#38bdf8')}
+              {selectedChartMetric === 'temperature' &&
+                renderSparkline(historyTemp, 20, 95, '#ea580c')}
+              {selectedChartMetric === 'current' &&
+                renderSparkline(historyCurr, 0, 20, '#ca8a04')}
+              {selectedChartMetric === 'pressure' &&
+                renderSparkline(historyPress, 0, 7, '#0891b2')}
+              {selectedChartMetric === 'flow' &&
+                renderSparkline(historyFlow, 0, 180, '#16a34a')}
             </div>
 
-            {/* X-Axis labels */}
-            <div className="flex justify-between text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-800/80 z-10">
-              <span>-60 sec</span>
-              <span>-45 sec</span>
-              <span>-30 sec</span>
-              <span>-15 sec</span>
-              <span className="text-cyan-400">NOW (Live)</span>
+            {/* X-Axis Labels */}
+            <div className="flex justify-between text-[11px] font-mono text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-800 z-10">
+              <span>-60s</span>
+              <span>-45s</span>
+              <span>-30s</span>
+              <span>-15s</span>
+              <span className="font-bold text-sky-600">LIVE (0s)</span>
             </div>
           </div>
         </section>
 
-        {/* ================= SECTION 5: COLLAPSIBLE TECHNICAL SPECIFICATIONS ================= */}
-        <section className="bg-[#1e293b] border border-slate-700/80 rounded-xl overflow-hidden shadow-lg">
-          <button
+        {/* ================= SECTION 5: TECHNICAL SPECIFICATIONS (COLLAPSIBLE) ================= */}
+        <section
+          className={`rounded-2xl border p-5 shadow-xs transition-all ${
+            isLight ? 'bg-white border-slate-200/90' : 'bg-[#161b22] border-slate-800'
+          }`}
+        >
+          <div
             onClick={() => setShowTechSpecs(!showTechSpecs)}
-            className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-800/50 transition-colors"
+            className="flex items-center justify-between cursor-pointer select-none"
           >
             <div className="flex items-center gap-2">
-              <Server className="w-4 h-4 text-cyan-400" />
-              <span className="text-xs font-bold font-mono tracking-wider uppercase text-slate-200">
-                PumpPulse AI Engineering &amp; Hardware Specifications
-              </span>
+              <Wrench className="w-4 h-4 text-sky-600" />
+              <h3 className="text-xs font-bold font-mono tracking-wider uppercase text-slate-800 dark:text-slate-200">
+                Technical Specifications &amp; Hardware Reference
+              </h3>
             </div>
-            {showTechSpecs ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-          </button>
+            <div className="text-xs font-mono font-bold text-sky-600 flex items-center gap-1">
+              <span>{showTechSpecs ? 'COLLAPSE' : 'EXPAND DETAILS'}</span>
+              {showTechSpecs ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </div>
+          </div>
 
           {showTechSpecs && (
-            <div className="p-4 pt-0 border-t border-slate-800 text-xs font-mono grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-slate-300">
-              <div className="p-3 rounded bg-slate-900/80 border border-slate-800">
-                <div className="text-cyan-400 font-bold mb-1.5 flex items-center gap-1">
-                  <Cpu className="w-3.5 h-3.5" /> Edge Layer
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 mt-4 pt-4 border-t border-slate-200 dark:border-slate-800 text-xs font-mono">
+              <div
+                className={`p-3.5 rounded-xl border ${
+                  isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                }`}
+              >
+                <div className="font-bold text-sky-600 mb-2">EDGE SENSING</div>
+                <div className="space-y-1 text-slate-600 dark:text-slate-300">
+                  <div>· ADXL345 3-Axis Accelerometer</div>
+                  <div>· PT100 Platinum RTD Sensor</div>
+                  <div>· ACS712 / CT Hall Ammeter</div>
+                  <div>· 4-20mA 0-10 Bar Pressure</div>
+                  <div>· Pulse Magnetic Flowmeter</div>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  <b>Processor:</b> ESP32-WROOM-32 (240MHz)<br />
-                  <b>TinyML:</b> TensorFlow Lite for Microcontrollers executing vibration FFT.<br />
-                  <b>Buffer:</b> Store-and-forward SPIFFS flash buffer prevents packet loss during network drops.
-                </p>
               </div>
 
-              <div className="p-3 rounded bg-slate-900/80 border border-slate-800">
-                <div className="text-emerald-400 font-bold mb-1.5 flex items-center gap-1">
-                  <Wifi className="w-3.5 h-3.5" /> Connectivity Layer
+              <div
+                className={`p-3.5 rounded-xl border ${
+                  isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                }`}
+              >
+                <div className="font-bold text-emerald-600 mb-2">EDGE GATEWAY</div>
+                <div className="space-y-1 text-slate-600 dark:text-slate-300">
+                  <div>· ESP32 Dual-Core @ 240MHz</div>
+                  <div>· FreeRTOS Sensor Tasks</div>
+                  <div>· TinyML FFT Vibration Binning</div>
+                  <div>· Hardware Relays for Auto-Trip</div>
+                  <div>· 10 kHz Burst Sampling</div>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  <b>Protocol:</b> MQTT over TLS 1.3 with QoS 1.<br />
-                  <b>Cellular:</b> SIMCOM 4G LTE-M modem with fallback to LoRaWAN (868/915 MHz).<br />
-                  <b>Cycle:</b> 2-second telemetry heartbeat with sub-50ms priority alarm interrupt.
-                </p>
               </div>
 
-              <div className="p-3 rounded bg-slate-900/80 border border-slate-800">
-                <div className="text-amber-400 font-bold mb-1.5 flex items-center gap-1">
-                  <Cloud className="w-3.5 h-3.5" /> Cloud AI Engine
+              <div
+                className={`p-3.5 rounded-xl border ${
+                  isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                }`}
+              >
+                <div className="font-bold text-amber-600 mb-2">CLOUD &amp; ML</div>
+                <div className="space-y-1 text-slate-600 dark:text-slate-300">
+                  <div>· InfluxDB v2.7 Time-Series</div>
+                  <div>· Random Forest Classifier</div>
+                  <div>· LSTM Remaining Life (RUL)</div>
+                  <div>· ISO 10816 Zone Severity Engine</div>
+                  <div>· TLS 1.3 MQTT Broker</div>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  <b>Database:</b> InfluxDB 2.x high-throughput time-series store.<br />
-                  <b>Inference:</b> Random Forest for fault classification (bearing, cavitation, misalignment).<br />
-                  <b>Prognostics:</b> Bidirectional LSTM regression predicting Remaining Useful Life (RUL).
-                </p>
               </div>
 
-              <div className="p-3 rounded bg-slate-900/80 border border-slate-800">
-                <div className="text-purple-400 font-bold mb-1.5 flex items-center gap-1">
-                  <Smartphone className="w-3.5 h-3.5" /> Application Layer
+              <div
+                className={`p-3.5 rounded-xl border ${
+                  isLight ? 'bg-slate-50 border-slate-200' : 'bg-slate-900 border-slate-800'
+                }`}
+              >
+                <div className="font-bold text-indigo-600 mb-2">PUMP SPECIFICATIONS</div>
+                <div className="space-y-1 text-slate-600 dark:text-slate-300">
+                  <div>· Model: Crompton CP-300</div>
+                  <div>· Power: 5.5 kW (7.5 HP)</div>
+                  <div>· Rated Speed: 1,450 RPM</div>
+                  <div>· Best Efficiency Head: 32 m</div>
+                  <div>· Rated Discharge: 130 L/min</div>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  <b>Technician App:</b> React Native with acoustic frequency analyzer.<br />
-                  <b>SCADA Bridge:</b> Modbus TCP / OPC-UA gateway for Crompton plant integration.<br />
-                  <b>Notifications:</b> Push alarms, SMS broadcast &amp; auto-generated work tickets.
-                </p>
               </div>
             </div>
           )}
         </section>
       </main>
-
-      {/* ================= MODAL: COPY / DOWNLOAD SINGLE-FILE HTML ================= */}
-      {showExportModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#1e293b] border border-slate-700 rounded-xl max-w-3xl w-full p-5 shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-700">
-              <div className="flex items-center gap-2">
-                <FileCode className="w-5 h-5 text-cyan-400" />
-                <h3 className="font-bold text-white text-base">
-                  PumpPulse AI - Standalone Single-File HTML Artifact
-                </h3>
-              </div>
-              <button
-                onClick={() => setShowExportModal(false)}
-                className="text-slate-400 hover:text-white p-1 rounded"
-              >
-                ✕
-              </button>
-            </div>
-
-            <p className="mt-3 text-xs text-slate-300">
-              Complete, self-contained HTML file embedding all CSS styles, JS simulation logic, SVG pump animations, and scenario controls in a single copy-pasteable file with zero dependencies:
-            </p>
-
-            <div className="mt-3 flex-1 min-h-[260px] bg-[#0f172a] border border-slate-800 rounded-lg p-3 overflow-y-auto font-mono text-[11px] text-slate-300 custom-scrollbar">
-              <pre>{standaloneHtmlCode}</pre>
-            </div>
-
-            <div className="mt-4 flex items-center justify-between gap-3 pt-3 border-t border-slate-800">
-              <div className="text-xs text-slate-400">
-                Ready for offline college hackathon demonstrations and laptop presentations.
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={copyCode}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-xs font-medium rounded-lg transition-colors"
-                >
-                  {copiedCode ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedCode ? 'Copied to Clipboard!' : 'Copy Code'}</span>
-                </button>
-                <button
-                  onClick={downloadHtml}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Download .HTML</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
