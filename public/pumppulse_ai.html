@@ -1,0 +1,1231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PumpPulse AI - IoT Pump Condition Monitoring & Digital Twin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-dark: #0f172a;
+      --panel-bg: #1e293b;
+      --card-bg: #0f172a;
+      --border-color: #334155;
+      --cyan-accent: #06b6d4;
+      --cyan-glow: rgba(6, 182, 212, 0.3);
+      --green-healthy: #10b981;
+      --yellow-warn: #f59e0b;
+      --red-alert: #ef4444;
+      --purple-accent: #a855f7;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-dark);
+      color: #f1f5f9;
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      padding: 16px;
+      line-height: 1.45;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Header Bar */
+    .header {
+      background: var(--panel-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 14px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+    .brand-title {
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: #ffffff;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .brand-title span.badge {
+      font-size: 0.68rem;
+      font-family: 'JetBrains Mono', monospace;
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--cyan-accent);
+      border: 1px solid rgba(6, 182, 212, 0.4);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .sub-brand {
+      font-size: 0.78rem;
+      color: #94a3b8;
+      font-family: 'JetBrains Mono', monospace;
+      margin-top: 3px;
+    }
+
+    /* Buttons */
+    .btn-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .btn {
+      background: #334155;
+      border: 1px solid #475569;
+      color: #e2e8f0;
+      padding: 7px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      font-weight: 600;
+      font-family: inherit;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .btn:hover { background: #475569; color: #fff; }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary {
+      background: rgba(6, 182, 212, 0.2);
+      border-color: var(--cyan-accent);
+      color: #38bdf8;
+    }
+    .btn-primary:hover { background: rgba(6, 182, 212, 0.35); color: #fff; }
+    .btn-danger {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: var(--red-alert);
+      color: #f87171;
+    }
+    .btn-scenario {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      color: #cbd5e1;
+    }
+    .btn-scenario.active {
+      background: rgba(6, 182, 212, 0.25);
+      border-color: var(--cyan-accent);
+      color: #fff;
+      box-shadow: 0 0 12px var(--cyan-glow);
+    }
+
+    /* Panels & Containers */
+    .panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+      position: relative;
+    }
+    .panel-title {
+      font-size: 0.78rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #94a3b8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+    }
+
+    /* Architecture Diagram Section */
+    .arch-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 10px;
+    }
+    @media (max-width: 1024px) {
+      .arch-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 640px) {
+      .arch-grid { grid-template-columns: 1fr; }
+    }
+
+    .arch-node {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      cursor: help;
+    }
+    .arch-node:hover {
+      border-color: var(--cyan-accent);
+      box-shadow: 0 0 16px var(--cyan-glow);
+      transform: translateY(-2px);
+    }
+    .arch-node .node-tag {
+      font-size: 0.65rem;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--cyan-accent);
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .arch-node .node-name {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #fff;
+      margin: 4px 0 6px 0;
+    }
+    .arch-node .node-specs {
+      font-size: 0.72rem;
+      color: #94a3b8;
+      font-family: 'JetBrains Mono', monospace;
+      line-height: 1.4;
+    }
+
+    /* Architecture Tooltip */
+    .arch-tooltip {
+      visibility: hidden;
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #090d16;
+      border: 1px solid var(--cyan-accent);
+      color: #e2e8f0;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      width: 220px;
+      z-index: 100;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.8);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    .arch-node:hover .arch-tooltip {
+      visibility: visible;
+      opacity: 1;
+    }
+
+    /* Data Flow SVG Animation */
+    .data-flow-line {
+      stroke-dasharray: 6 8;
+      animation: movePackets 1.2s linear infinite;
+    }
+    @keyframes movePackets {
+      from { stroke-dashoffset: 40; }
+      to { stroke-dashoffset: 0; }
+    }
+
+    /* Main Dashboard Layout */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 320px 1fr 340px;
+      gap: 16px;
+    }
+    @media (max-width: 1200px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+    }
+
+    /* Virtual Pump Motor Graphic */
+    .pump-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      margin: 10px 0;
+    }
+    @keyframes spinClockwise {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .pump-rotor {
+      transform-origin: 50px 50px;
+      transition: transform 0.4s ease;
+    }
+    .pump-rotor.spinning {
+      animation: spinClockwise 1.2s linear infinite;
+    }
+    .pump-rotor.spinning-fast {
+      animation: spinClockwise 0.6s linear infinite;
+    }
+    .pump-rotor.spinning-slow {
+      animation: spinClockwise 2.4s linear infinite;
+    }
+
+    /* Sensor Readout Cards */
+    .sensor-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      transition: all 0.3s ease;
+    }
+    .sensor-card:hover { border-color: #475569; }
+    .sensor-card.warning {
+      border-color: rgba(245, 158, 11, 0.5);
+      background: rgba(245, 158, 11, 0.05);
+    }
+    .sensor-card.critical {
+      border-color: rgba(239, 68, 68, 0.6);
+      background: rgba(239, 68, 68, 0.08);
+      box-shadow: 0 0 14px rgba(239, 68, 68, 0.2);
+    }
+    .sensor-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .sensor-title { font-size: 0.82rem; font-weight: 700; color: #f8fafc; }
+    .sensor-badge {
+      font-size: 0.68rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .badge-normal { background: rgba(16, 185, 129, 0.15); color: var(--green-healthy); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-warning { background: rgba(245, 158, 11, 0.15); color: var(--yellow-warn); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-critical { background: rgba(239, 68, 68, 0.2); color: var(--red-alert); border: 1px solid rgba(239, 68, 68, 0.4); }
+
+    .sensor-value {
+      font-size: 1.6rem;
+      font-weight: 800;
+      font-family: 'JetBrains Mono', monospace;
+      color: #fff;
+    }
+    .sensor-unit { font-size: 0.75rem; color: #94a3b8; font-weight: normal; margin-left: 2px; }
+    .sensor-thresholds {
+      font-size: 0.68rem;
+      color: #64748b;
+      font-family: 'JetBrains Mono', monospace;
+      margin-top: 4px;
+    }
+
+    /* Circular AI Health Gauge */
+    .gauge-wrapper {
+      position: relative;
+      width: 140px;
+      height: 140px;
+      margin: 10px auto;
+    }
+    .gauge-circle {
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+    }
+    .gauge-text {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .gauge-score {
+      font-size: 2.2rem;
+      font-weight: 800;
+      line-height: 1;
+      color: #fff;
+    }
+    .gauge-status {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+
+    /* Digital Twin Section */
+    .twin-box {
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+    }
+    .twin-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+    .twin-col {
+      background: #1e293b;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #334155;
+    }
+
+    /* Alert & Recommendation Stream */
+    .alert-stream {
+      height: 280px;
+      overflow-y: auto;
+      background: var(--card-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+    }
+    .alert-item {
+      padding: 8px 10px;
+      border-radius: 6px;
+      border-left: 3px solid #64748b;
+      background: rgba(30, 41, 59, 0.6);
+      line-height: 1.35;
+    }
+    .alert-item.info { border-left-color: var(--cyan-accent); }
+    .alert-item.warning { border-left-color: var(--yellow-warn); background: rgba(245, 158, 11, 0.08); }
+    .alert-item.critical { border-left-color: var(--red-alert); background: rgba(239, 68, 68, 0.12); }
+
+    /* Canvas Sparkline & Historical Chart */
+    canvas.sparkline { width: 100%; height: 32px; display: block; margin-top: 4px; }
+    canvas.chart-large { width: 100%; height: 110px; display: block; }
+
+    /* Collapsible Tech Specs */
+    .collapsible-header {
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .collapsible-content {
+      display: none;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-color);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+    .collapsible-content.open { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    @media (max-width: 900px) { .collapsible-content.open { grid-template-columns: 1fr 1fr; } }
+  </style>
+</head>
+<body>
+
+  <!-- ================= HEADER BAR ================= -->
+  <header class="header">
+    <div>
+      <div class="brand-title">
+        <span>PumpPulse AI</span>
+        <span class="badge">IoT Condition Monitoring</span>
+      </div>
+      <div class="sub-brand">
+        Edge AI (ESP32) · InfluxDB Time-Series · LSTM Digital Twin · SCADA Telemetry
+      </div>
+    </div>
+
+    <!-- Simulator Controls: Play/Pause, Speed, Reset -->
+    <div class="btn-group">
+      <button class="btn" onclick="togglePlay()" id="btnPlay">
+        <span id="playIcon">⏸</span> <span id="playText">Pause</span>
+      </button>
+
+      <div style="display:flex; background:#0f172a; padding:2px; border-radius:6px; border:1px solid #334155;">
+        <button class="btn" style="padding:4px 8px; font-size:0.75rem; background:#06b6d4; color:#0f172a;" onclick="setSpeed(1, this)">1x</button>
+        <button class="btn" style="padding:4px 8px; font-size:0.75rem; background:transparent;" onclick="setSpeed(2, this)">2x</button>
+        <button class="btn" style="padding:4px 8px; font-size:0.75rem; background:transparent;" onclick="setSpeed(4, this)">4x</button>
+      </div>
+
+      <!-- Fault Injection Dropdown -->
+      <select id="faultSelect" onchange="injectSelectedFault(this.value)" class="btn" style="background:#0f172a; border-color:#475569; color:#cbd5e1;">
+        <option value="">Inject Fault...</option>
+        <option value="cavitation">Cavitation Event</option>
+        <option value="unbalance">Impeller Unbalance</option>
+        <option value="phase_loss">Motor Phase Voltage Drop</option>
+        <option value="bearing_spall">Inner Raceway Spalling</option>
+      </select>
+
+      <button class="btn btn-primary" onclick="resetBaseline()">Reset Baseline</button>
+    </div>
+  </header>
+
+  <!-- ================= 1. INTERACTIVE SYSTEM ARCHITECTURE DIAGRAM ================= -->
+  <section class="panel">
+    <div class="panel-title">
+      <span>1. Interactive System Architecture &amp; Data Pipeline Flow</span>
+      <span style="color:#06b6d4;">LIVE MQTT TELEMETRY ACTIVE</span>
+    </div>
+
+    <div class="arch-grid">
+      <!-- 1. Physical Sensors -->
+      <div class="arch-node">
+        <div class="node-tag">Layer 01 · Transducers</div>
+        <div class="node-name">Sensors Cluster</div>
+        <div class="node-specs">
+          · ADXL345: 3-Axis Vib (10kHz)<br>
+          · PT100 RTD: Bearing Temp<br>
+          · Hall Current CT: Amps<br>
+          · 4-20mA Pressure Transducer<br>
+          · Volumetric Flow Meter
+        </div>
+        <div class="arch-tooltip">
+          <b>Sensors Layer:</b> Converts mechanical vibration, heat, hydraulic pressure, and electrical phase current into analog/SPI streams.
+        </div>
+      </div>
+
+      <!-- 2. Edge Device (ESP32) -->
+      <div class="arch-node">
+        <div class="node-tag">Layer 02 · Edge AI</div>
+        <div class="node-name">ESP32 Gateway</div>
+        <div class="node-specs">
+          · Dual-Core 240MHz Xtensa<br>
+          · TinyML Vibration FFT<br>
+          · Store-and-Forward SPIFFS<br>
+          · 5-sec Emergency Dry Run Trip<br>
+          · ISO 10816 Zone Assessment
+        </div>
+        <div class="arch-tooltip">
+          <b>ESP32 Edge:</b> Performs on-device Fast Fourier Transform (FFT) and instant dry-run trips without relying on cloud latency.
+        </div>
+      </div>
+
+      <!-- 3. Cloud AI & Digital Twin -->
+      <div class="arch-node">
+        <div class="node-tag">Layer 03 · Analytics</div>
+        <div class="node-name">Cloud AI &amp; InfluxDB</div>
+        <div class="node-specs">
+          · InfluxDB Time-Series Store<br>
+          · Random Forest Classifier<br>
+          · LSTM RUL Degradation Model<br>
+          · Digital Twin Sync Engine<br>
+          · TLS 1.3 MQTT Broker
+        </div>
+        <div class="arch-tooltip">
+          <b>Cloud AI Layer:</b> InfluxDB records high-frequency telemetry. Machine Learning models forecast Remaining Useful Life (RUL) in days.
+        </div>
+      </div>
+
+      <!-- 4. Mobile & SCADA App -->
+      <div class="arch-node">
+        <div class="node-tag">Layer 04 · Operations</div>
+        <div class="node-name">Mobile &amp; SCADA</div>
+        <div class="node-specs">
+          · React Native Field App<br>
+          · Crompton Plant SCADA Bridge<br>
+          · Acoustic Frequency Tool<br>
+          · Push Alarms &amp; Work Orders<br>
+          · Live Health KPI Dashboard
+        </div>
+        <div class="arch-tooltip">
+          <b>Application Layer:</b> Field technicians receive prioritized repair recommendations and maintenance alerts directly on mobile.
+        </div>
+      </div>
+    </div>
+
+    <!-- Data packet animation ribbon -->
+    <svg style="width:100%; height:20px; margin-top:10px;" viewBox="0 0 1000 20" preserveAspectRatio="none">
+      <line x1="80" y1="10" x2="920" y2="10" stroke="#334155" stroke-width="2"/>
+      <line x1="80" y1="10" x2="920" y2="10" stroke="#06b6d4" stroke-width="3" class="data-flow-line"/>
+      <circle cx="80" cy="10" r="4" fill="#10b981"/>
+      <circle cx="340" cy="10" r="4" fill="#06b6d4"/>
+      <circle cx="620" cy="10" r="4" fill="#06b6d4"/>
+      <circle cx="920" cy="10" r="4" fill="#a855f7"/>
+    </svg>
+  </section>
+
+  <!-- ================= 2. SCENARIO SIMULATOR BUTTON BAR ================= -->
+  <section class="panel" style="padding: 12px 16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div style="font-size:0.78rem; font-family:'JetBrains Mono'; font-weight:700; color:#94a3b8;">
+        SCENARIO SIMULATOR:
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-scenario active" id="btnNormal" onclick="setScenario('NORMAL')">Normal Operation</button>
+        <button class="btn btn-scenario" id="btnBearing" onclick="setScenario('BEARING_WEAR')">Bearing Wear (30s ramp)</button>
+        <button class="btn btn-scenario" id="btnDryRun" onclick="setScenario('DRY_RUN')">Dry Run (5s Auto-Trip)</button>
+        <button class="btn btn-scenario" id="btnBlockage" onclick="setScenario('BLOCKAGE')">Blockage Simulation</button>
+        <button class="btn btn-scenario" id="btnElec" onclick="setScenario('ELECTRICAL_FAULT')">Electrical Fault</button>
+      </div>
+      <div id="simTimerBadge" style="font-family:'JetBrains Mono'; font-size:0.75rem; color:#06b6d4;">
+        T: 0s · Nominal
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 3. MAIN DASHBOARD GRID ================= -->
+  <div class="dashboard-grid">
+
+    <!-- LEFT: Virtual Pump & AI Health Score -->
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      <!-- Virtual Pump Interface -->
+      <div class="panel" style="text-align:center;">
+        <div class="panel-title">
+          <span>VIRTUAL PUMP ACTUATOR</span>
+          <span id="pumpRunBadge" style="color:#10b981; font-weight:bold;">PUMP: RUNNING</span>
+        </div>
+
+        <div class="pump-container">
+          <svg width="130" height="130" viewBox="0 0 100 100">
+            <!-- Piping & Volute -->
+            <rect x="0" y="42" width="22" height="16" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+            <rect x="62" y="0" width="16" height="22" fill="#0f172a" stroke="#334155" stroke-width="2"/>
+            <circle cx="50" cy="50" r="42" fill="#0f172a" stroke="#06b6d4" stroke-width="4" id="pumpCasing"/>
+
+            <!-- Rotating Impeller -->
+            <g id="pumpRotor" class="pump-rotor spinning">
+              <circle cx="50" cy="50" r="14" fill="#06b6d4" id="pumpHub"/>
+              <path d="M50 20 L50 50 M80 50 L50 50 M50 80 L50 50 M20 50 L50 50" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+            </g>
+          </svg>
+          <div id="motorRpmText" style="font-family:'JetBrains Mono'; font-size:0.88rem; font-weight:700; color:#38bdf8; margin-top:8px;">
+            1,450 RPM · BEP 94.2%
+          </div>
+        </div>
+
+        <div id="dryRunTripBanner" style="display:none; background:#ef4444; color:#fff; font-family:'JetBrains Mono'; font-size:0.75rem; font-weight:bold; padding:6px; border-radius:6px; margin-top:6px; animation:blink 0.5s infinite;">
+          EMERGENCY AUTO-SHUTDOWN: DRY RUN DETECTED
+        </div>
+      </div>
+
+      <!-- AI Health Score Gauge -->
+      <div class="panel" style="text-align:center;">
+        <div class="panel-title">
+          <span>AI HEALTH SCORE GAUGE</span>
+          <span style="color:#06b6d4;">Weighted TinyML</span>
+        </div>
+
+        <div class="gauge-wrapper">
+          <svg width="140" height="140" viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="50" fill="none" stroke="#0f172a" stroke-width="10"/>
+            <circle id="gaugeArc" class="gauge-circle" cx="60" cy="60" r="50" fill="none" stroke="#10b981" stroke-width="10" stroke-dasharray="314" stroke-dashoffset="12" stroke-linecap="round"/>
+          </svg>
+          <div class="gauge-text">
+            <div id="gaugeScore" class="gauge-score">96</div>
+            <div id="gaugeStatus" class="gauge-status" style="color:#10b981;">HEALTHY</div>
+          </div>
+        </div>
+
+        <div style="font-size:0.72rem; font-family:'JetBrains Mono'; color:#94a3b8; margin-top:4px;">
+          Weights: Vib 35% · Temp 25% · Pres 20% · Amp 20%
+        </div>
+      </div>
+    </div>
+
+    <!-- CENTER: 5 Real-Time Sensor Readouts -->
+    <div class="panel">
+      <div class="panel-title">
+        <span>REAL-TIME SENSOR READOUTS (UPDATING EVERY 2 SECONDS)</span>
+        <span style="color:#10b981;">● ISO 10816-3 ACTIVE</span>
+      </div>
+
+      <!-- 1. Vibration -->
+      <div class="sensor-card" id="cardVib">
+        <div class="sensor-header">
+          <div class="sensor-title">Vibration Velocity (RMS)</div>
+          <div class="sensor-badge badge-normal" id="badgeVib">NORMAL</div>
+        </div>
+        <div>
+          <span class="sensor-value" id="valVib">2.80</span>
+          <span class="sensor-unit">mm/s</span>
+        </div>
+        <canvas id="sparkVib" class="sparkline" width="300" height="32"></canvas>
+        <div class="sensor-thresholds">Normal: 2.0 - 4.0 · Warning: 4.0 - 8.0 · Critical: &gt; 8.0 mm/s</div>
+      </div>
+
+      <!-- 2. Temperature -->
+      <div class="sensor-card" id="cardTemp">
+        <div class="sensor-header">
+          <div class="sensor-title">Bearing Temperature (PT100)</div>
+          <div class="sensor-badge badge-normal" id="badgeTemp">NORMAL</div>
+        </div>
+        <div>
+          <span class="sensor-value" id="valTemp">48.5</span>
+          <span class="sensor-unit">°C</span>
+        </div>
+        <canvas id="sparkTemp" class="sparkline" width="300" height="32"></canvas>
+        <div class="sensor-thresholds">Normal: 40 - 60 · Warning: 60 - 75 · Critical: &gt; 75 °C</div>
+      </div>
+
+      <!-- 3. Current -->
+      <div class="sensor-card" id="cardCurr">
+        <div class="sensor-header">
+          <div class="sensor-title">Motor Load Current (CT)</div>
+          <div class="sensor-badge badge-normal" id="badgeCurr">NORMAL</div>
+        </div>
+        <div>
+          <span class="sensor-value" id="valCurr">6.40</span>
+          <span class="sensor-unit">A</span>
+        </div>
+        <canvas id="sparkCurr" class="sparkline" width="300" height="32"></canvas>
+        <div class="sensor-thresholds">Normal: 5.0 - 8.0 · Warning: 8.0 - 12.0 · Critical: &gt; 12.0 A</div>
+      </div>
+
+      <!-- 4. Pressure -->
+      <div class="sensor-card" id="cardPress">
+        <div class="sensor-header">
+          <div class="sensor-title">Discharge Pressure</div>
+          <div class="sensor-badge badge-normal" id="badgePress">NORMAL</div>
+        </div>
+        <div>
+          <span class="sensor-value" id="valPress">3.20</span>
+          <span class="sensor-unit">bar</span>
+        </div>
+        <canvas id="sparkPress" class="sparkline" width="300" height="32"></canvas>
+        <div class="sensor-thresholds">Normal: 2.0 - 4.0 · Warning: &lt; 1.5 or &gt; 5.0 bar</div>
+      </div>
+
+      <!-- 5. Flow Rate -->
+      <div class="sensor-card" id="cardFlow">
+        <div class="sensor-header">
+          <div class="sensor-title">Discharge Flow Rate</div>
+          <div class="sensor-badge badge-normal" id="badgeFlow">NORMAL</div>
+        </div>
+        <div>
+          <span class="sensor-value" id="valFlow">128</span>
+          <span class="sensor-unit">L/min</span>
+        </div>
+        <canvas id="sparkFlow" class="sparkline" width="300" height="32"></canvas>
+        <div class="sensor-thresholds">Normal: 100 - 150 · Warning: &lt; 80 L/min</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Digital Twin & Alerts Panel -->
+    <div style="display:flex; flex-direction:column; gap:16px;">
+      <!-- Digital Twin Visualization -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>DIGITAL TWIN VISUALIZATION</span>
+          <span style="color:#a855f7;">LSTM SYNCED</span>
+        </div>
+
+        <div class="twin-grid">
+          <div class="twin-col">
+            <div style="font-size:0.68rem; color:#94a3b8;">PHYSICAL PUMP</div>
+            <div style="font-weight:bold; color:#fff; margin:2px 0;">Crompton 5.5kW</div>
+            <div id="twinPhysStatus" style="color:#10b981; font-size:0.7rem;">NORMAL</div>
+          </div>
+          <div class="twin-col" style="border-color:#06b6d4;">
+            <div style="font-size:0.68rem; color:#38bdf8;">DIGITAL TWIN</div>
+            <div style="font-weight:bold; color:#fff; margin:2px 0;">Physics + ML</div>
+            <div style="color:#38bdf8; font-size:0.7rem;">CONFIDENCE: <span id="twinConfidence">96.4%</span></div>
+          </div>
+        </div>
+
+        <div class="twin-box">
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span>Failure Probability:</span>
+            <span id="twinFailProb" style="color:#10b981; font-weight:bold;">3.2%</span>
+          </div>
+          <div style="display:flex; justify-content:space-between;">
+            <span>Remaining Useful Life (RUL):</span>
+            <span id="twinRulDays" style="color:#38bdf8; font-weight:bold;">142 DAYS</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Real-time Alerts & Recommendations -->
+      <div class="panel" style="flex:1; display:flex; flex-direction:column;">
+        <div class="panel-title">
+          <span>ALERTS &amp; AI RECOMMENDATIONS</span>
+          <button class="btn" style="padding:2px 6px; font-size:0.68rem;" onclick="clearAlerts()">Clear</button>
+        </div>
+
+        <div class="alert-stream" id="alertStream">
+          <div class="alert-item info">
+            <div style="color:#38bdf8; font-weight:bold;">[BOOT] ESP32 Telemetry Linked</div>
+            <div>Edge gateway communicating over TLS 1.3 MQTT. Base RUL calibrated at 142 days.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 4. HISTORICAL GRAPH (LAST 60 SECONDS) ================= -->
+  <section class="panel">
+    <div class="panel-title">
+      <span>HISTORICAL TIME-SERIES TREND (LAST 60 SECONDS BUFFER)</span>
+      <div style="display:flex; gap:6px;">
+        <button class="btn" style="padding:3px 8px; font-size:0.7rem; background:#06b6d4; color:#0f172a;" onclick="setChartMetric('vib', this)">Vibration</button>
+        <button class="btn" style="padding:3px 8px; font-size:0.7rem;" onclick="setChartMetric('temp', this)">Temp</button>
+        <button class="btn" style="padding:3px 8px; font-size:0.7rem;" onclick="setChartMetric('curr', this)">Current</button>
+        <button class="btn" style="padding:3px 8px; font-size:0.7rem;" onclick="setChartMetric('press', this)">Pressure</button>
+        <button class="btn" style="padding:3px 8px; font-size:0.7rem;" onclick="setChartMetric('flow', this)">Flow</button>
+      </div>
+    </div>
+    <canvas id="largeChart" class="chart-large" width="1000" height="110"></canvas>
+    <div style="display:flex; justify-content:space-between; font-family:'JetBrains Mono'; font-size:0.68rem; color:#64748b; margin-top:4px;">
+      <span>-60 sec</span>
+      <span>-45 sec</span>
+      <span>-30 sec</span>
+      <span>-15 sec</span>
+      <span style="color:#06b6d4;">LIVE (0s)</span>
+    </div>
+  </section>
+
+  <!-- ================= 5. TECHNICAL SPECIFICATIONS (COLLAPSIBLE) ================= -->
+  <section class="panel">
+    <div class="collapsible-header" onclick="toggleTechSpecs()">
+      <div style="font-family:'JetBrains Mono'; font-size:0.8rem; font-weight:700; color:#e2e8f0;">
+        TECHNICAL SPECIFICATIONS: SYSTEM ARCHITECTURE
+      </div>
+      <div id="techSpecsToggleText" style="font-family:'JetBrains Mono'; font-size:0.75rem; color:#06b6d4;">[EXPAND +]</div>
+    </div>
+
+    <div class="collapsible-content" id="techSpecsContent">
+      <div style="background:#0f172a; padding:10px; border-radius:6px; border:1px solid #334155;">
+        <div style="color:#38bdf8; font-weight:bold; margin-bottom:4px;">EDGE LAYER</div>
+        · ESP32 Dual-Core (240MHz)<br>
+        · Local TinyML Vibration FFT<br>
+        · SPIFFS Store-and-Forward Buffer<br>
+        · Sub-50ms Dry Run Trip Relays
+      </div>
+      <div style="background:#0f172a; padding:10px; border-radius:6px; border:1px solid #334155;">
+        <div style="color:#10b981; font-weight:bold; margin-bottom:4px;">CONNECTIVITY</div>
+        · MQTT with TLS 1.3 / QoS 1<br>
+        · SIMCOM 4G LTE-M / LoRaWAN Fallback<br>
+        · 2-Second Telemetry Interval<br>
+        · Encrypted CoAP Diagnostics
+      </div>
+      <div style="background:#0f172a; padding:10px; border-radius:6px; border:1px solid #334155;">
+        <div style="color:#f59e0b; font-weight:bold; margin-bottom:4px;">CLOUD AI &amp; TWIN</div>
+        · InfluxDB Time-Series Metric Store<br>
+        · Random Forest Anomaly Classifier<br>
+        · LSTM Regression for Remaining Life<br>
+        · Physics-Informed Digital Twin
+      </div>
+      <div style="background:#0f172a; padding:10px; border-radius:6px; border:1px solid #334155;">
+        <div style="color:#a855f7; font-weight:bold; margin-bottom:4px;">APPLICATION</div>
+        · React Native Technician App<br>
+        · Push Alarm Notifications &amp; SMS<br>
+        · Acoustic FFT Stethoscope Tool<br>
+        · Crompton SCADA Gateway Integration
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= JAVASCRIPT SIMULATION LOGIC ================= -->
+  <script>
+    // System State
+    let isPlaying = true;
+    let simSpeed = 1;
+    let currentScenario = 'NORMAL';
+    let elapsed = 0;
+    let dryRunCounter = 0;
+    let isTripped = false;
+    let selectedChart = 'vib';
+
+    // Sensor Readings (Baseline)
+    let vib = 2.80;    // mm/s (Norm: 2-4)
+    let temp = 48.5;   // °C (Norm: 40-60)
+    let curr = 6.40;   // A (Norm: 5-8)
+    let press = 3.20;  // bar (Norm: 2-4)
+    let flow = 128;    // L/min (Norm: 100-150)
+
+    // Historical buffers (30 entries = 60s at 2s updates)
+    const bufVib = Array(30).fill(2.80);
+    const bufTemp = Array(30).fill(48.5);
+    const bufCurr = Array(30).fill(6.40);
+    const bufPress = Array(30).fill(3.20);
+    const bufFlow = Array(30).fill(128);
+
+    // Audio Alert Tones (Web Audio API)
+    let audioCtx = null;
+    function playBeep(freq = 660, dur = 0.2) {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        g.gain.setValueAtTime(0.06, audioCtx.currentTime);
+        g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+        osc.connect(g);
+        g.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + dur);
+      } catch(e) {}
+    }
+
+    // Logger
+    function addAlert(severity, title, recommendation) {
+      const box = document.getElementById('alertStream');
+      const time = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = `alert-item ${severity}`;
+      div.innerHTML = `
+        <div style="font-weight:bold; color:${severity === 'critical' ? '#f87171' : severity === 'warning' ? '#fbbf24' : '#38bdf8'};">
+          [${time}] ${title}
+        </div>
+        <div style="color:#cbd5e1; margin-top:2px;">${recommendation}</div>
+      `;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+      if (severity === 'critical') playBeep(880, 0.35);
+      else if (severity === 'warning') playBeep(520, 0.2);
+    }
+
+    function clearAlerts() {
+      document.getElementById('alertStream').innerHTML = '';
+      addAlert('info', 'Log Cleared', 'Active telemetry alerts reset.');
+    }
+
+    // Play/Pause & Speed
+    function togglePlay() {
+      isPlaying = !isPlaying;
+      document.getElementById('playText').textContent = isPlaying ? 'Pause' : 'Resume';
+      document.getElementById('playIcon').textContent = isPlaying ? '⏸' : '▶';
+    }
+
+    function setSpeed(spd, btn) {
+      simSpeed = spd;
+      btn.parentElement.querySelectorAll('button').forEach(b => {
+        b.style.background = 'transparent';
+        b.style.color = '#e2e8f0';
+      });
+      btn.style.background = '#06b6d4';
+      btn.style.color = '#0f172a';
+    }
+
+    // Scenario Switching
+    function setScenario(sc) {
+      currentScenario = sc;
+      elapsed = 0;
+      dryRunCounter = 0;
+      isTripped = false;
+      document.getElementById('dryRunTripBanner').style.display = 'none';
+
+      document.querySelectorAll('.btn-scenario').forEach(b => b.classList.remove('active'));
+      const mapping = {
+        'NORMAL': 'btnNormal',
+        'BEARING_WEAR': 'btnBearing',
+        'DRY_RUN': 'btnDryRun',
+        'BLOCKAGE': 'btnBlockage',
+        'ELECTRICAL_FAULT': 'btnElec'
+      };
+      if (mapping[sc]) document.getElementById(mapping[sc]).classList.add('active');
+
+      if (sc === 'NORMAL') {
+        addAlert('info', 'Normal Operation Restored', 'All 5 sensor channels within nominal baseline envelope.');
+      } else if (sc === 'BEARING_WEAR') {
+        addAlert('warning', 'Bearing Wear Scenario Engaged', 'Sub-surface spalling initiated. Vibration will gradually climb over 30s.');
+      } else if (sc === 'DRY_RUN') {
+        addAlert('critical', 'Dry Run Simulated', 'Suction supply blocked. Flow rate dropping to 0 L/min. 5s auto-shutdown countdown started.');
+      } else if (sc === 'BLOCKAGE') {
+        addAlert('warning', 'Discharge Blockage Engaged', 'Throttling discharge line. Backpressure increasing, flow throttled.');
+      } else if (sc === 'ELECTRICAL_FAULT') {
+        addAlert('critical', 'Electrical Fault Engaged', 'Current spike and phase unbalance injected.');
+      }
+      updateUI();
+    }
+
+    function injectSelectedFault(val) {
+      if (!val) return;
+      if (val === 'cavitation') {
+        addAlert('warning', 'Hydraulic Cavitation Injected', 'Vapor bubble collapse detected in pump eye. High frequency acoustic noise.');
+        press = 1.4; flow = 75; vib = 5.2;
+      } else if (val === 'unbalance') {
+        addAlert('warning', 'Dynamic Unbalance Injected', '1X rotational frequency peak on FFT spectrum.');
+        vib = 6.8;
+      } else if (val === 'phase_loss') {
+        addAlert('critical', 'Phase Sag / Voltage Drop', 'Motor current unbalance exceeds 15%. Thermal dissipation rising.');
+        curr = 14.2; temp = 68.0;
+      } else if (val === 'bearing_spall') {
+        addAlert('critical', 'Inner Race Ball Pass Spall', 'BPFI harmonics observed at 148 Hz. Recommend prompt bearing replacement.');
+        vib = 8.6; temp = 76.5;
+      }
+      document.getElementById('faultSelect').value = '';
+      updateUI();
+    }
+
+    function resetBaseline() {
+      vib = 2.80; temp = 48.5; curr = 6.40; press = 3.20; flow = 128;
+      setScenario('NORMAL');
+      addAlert('info', 'System Master Reset', 'Digital Twin & Physical Pump realigned to factory benchmarks.');
+    }
+
+    function toggleTechSpecs() {
+      const c = document.getElementById('techSpecsContent');
+      const t = document.getElementById('techSpecsToggleText');
+      if (c.classList.contains('open')) {
+        c.classList.remove('open');
+        t.textContent = '[EXPAND +]';
+      } else {
+        c.classList.add('open');
+        t.textContent = '[COLLAPSE -]';
+      }
+    }
+
+    function setChartMetric(m, btn) {
+      selectedChart = m;
+      btn.parentElement.querySelectorAll('button').forEach(b => {
+        b.style.background = 'transparent';
+        b.style.color = '#e2e8f0';
+      });
+      btn.style.background = '#06b6d4';
+      btn.style.color = '#0f172a';
+      drawLargeChart();
+    }
+
+    // Sparkline Drawing Function
+    function drawSparkline(canvasId, data, min, max, strokeColor) {
+      const cvs = document.getElementById(canvasId);
+      if (!cvs) return;
+      const ctx = cvs.getContext('2d');
+      const w = cvs.width, h = cvs.height;
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.beginPath();
+      for (let i = 0; i < data.length; i++) {
+        const x = (i / (data.length - 1)) * w;
+        const norm = Math.max(0, Math.min(1, (data[i] - min) / (max - min || 1)));
+        const y = h - norm * (h - 6) - 3;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+
+    // 60-Second Trend Chart
+    function drawLargeChart() {
+      const cvs = document.getElementById('largeChart');
+      if (!cvs) return;
+      const ctx = cvs.getContext('2d');
+      const w = cvs.width, h = cvs.height;
+      ctx.clearRect(0, 0, w, h);
+
+      let data = bufVib, min = 0, max = 12, color = '#38bdf8';
+      if (selectedChart === 'temp') { data = bufTemp; min = 20; max = 95; color = '#fb923c'; }
+      else if (selectedChart === 'curr') { data = bufCurr; min = 0; max = 20; color = '#facc15'; }
+      else if (selectedChart === 'press') { data = bufPress; min = 0; max = 7; color = '#06b6d4'; }
+      else if (selectedChart === 'flow') { data = bufFlow; min = 0; max = 180; color = '#4ade80'; }
+
+      // Fill area
+      ctx.beginPath();
+      ctx.moveTo(0, h);
+      for (let i = 0; i < data.length; i++) {
+        const x = (i / (data.length - 1)) * w;
+        const norm = Math.max(0, Math.min(1, (data[i] - min) / (max - min || 1)));
+        const y = h - norm * (h - 12) - 6;
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(w, h);
+      ctx.closePath();
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, color + '44');
+      grad.addColorStop(1, color + '00');
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // Stroke line
+      ctx.beginPath();
+      for (let i = 0; i < data.length; i++) {
+        const x = (i / (data.length - 1)) * w;
+        const norm = Math.max(0, Math.min(1, (data[i] - min) / (max - min || 1)));
+        const y = h - norm * (h - 12) - 6;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+
+    // UI Update Cycle
+    function updateUI() {
+      // 1. Text values
+      document.getElementById('valVib').textContent = vib.toFixed(2);
+      document.getElementById('valTemp').textContent = temp.toFixed(1);
+      document.getElementById('valCurr').textContent = curr.toFixed(2);
+      document.getElementById('valPress').textContent = press.toFixed(2);
+      document.getElementById('valFlow').textContent = Math.round(flow);
+
+      // 2. Status Badges & Card Styles
+      // Vibration: Normal 2-4, Warning 4-8, Critical >8
+      const statVib = vib > 8 ? 'critical' : vib >= 4 ? 'warning' : 'normal';
+      document.getElementById('badgeVib').className = `sensor-badge badge-${statVib}`;
+      document.getElementById('badgeVib').textContent = statVib.toUpperCase();
+      document.getElementById('cardVib').className = `sensor-card ${statVib}`;
+
+      // Temperature: Normal 40-60, Warning 60-75, Critical >75
+      const statTemp = temp > 75 ? 'critical' : temp >= 60 ? 'warning' : 'normal';
+      document.getElementById('badgeTemp').className = `sensor-badge badge-${statTemp}`;
+      document.getElementById('badgeTemp').textContent = statTemp.toUpperCase();
+      document.getElementById('cardTemp').className = `sensor-card ${statTemp}`;
+
+      // Current: Normal 5-8, Warning 8-12, Critical >12
+      const statCurr = curr > 12 ? 'critical' : curr >= 8 ? 'warning' : 'normal';
+      document.getElementById('badgeCurr').className = `sensor-badge badge-${statCurr}`;
+      document.getElementById('badgeCurr').textContent = statCurr.toUpperCase();
+      document.getElementById('cardCurr').className = `sensor-card ${statCurr}`;
+
+      // Pressure: Normal 2-4, Warning <1.5 or >5
+      const statPress = (press < 1.5 || press > 5.0) ? 'warning' : 'normal';
+      document.getElementById('badgePress').className = `sensor-badge badge-${statPress}`;
+      document.getElementById('badgePress').textContent = statPress.toUpperCase();
+      document.getElementById('cardPress').className = `sensor-card ${statPress}`;
+
+      // Flow Rate: Normal 100-150, Warning <80
+      const statFlow = flow < 30 ? 'critical' : flow < 80 ? 'warning' : 'normal';
+      document.getElementById('badgeFlow').className = `sensor-badge badge-${statFlow}`;
+      document.getElementById('badgeFlow').textContent = statFlow.toUpperCase();
+      document.getElementById('cardFlow').className = `sensor-card ${statFlow}`;
+
+      // 3. AI Health Score Calculation
+      let score = 100;
+      if (isTripped) {
+        score = 8;
+      } else {
+        if (vib > 8) score -= 40; else if (vib > 4) score -= (vib - 4) * 9;
+        if (temp > 75) score -= 35; else if (temp > 60) score -= (temp - 60) * 2;
+        if (curr > 12) score -= 30; else if (curr > 8) score -= (curr - 8) * 6;
+        if (press > 5) score -= (press - 5) * 16; else if (press < 1.5) score -= (1.5 - press) * 18;
+        if (flow < 80) score -= Math.max(0, (80 - flow) * 0.4);
+      }
+      score = Math.max(4, Math.min(99, Math.round(score)));
+
+      document.getElementById('gaugeScore').textContent = score;
+      const gColor = score >= 80 ? '#10b981' : score >= 50 ? '#f59e0b' : '#ef4444';
+      const gText = score >= 80 ? 'HEALTHY' : score >= 65 ? 'MONITOR' : score >= 50 ? 'SERVICE SOON' : 'CRITICAL';
+      document.getElementById('gaugeStatus').textContent = gText;
+      document.getElementById('gaugeStatus').style.color = gColor;
+      document.getElementById('gaugeArc').style.stroke = gColor;
+      document.getElementById('gaugeArc').style.strokeDashoffset = 314 - (314 * score) / 100;
+
+      // 4. Digital Twin Telemetry
+      const failProb = isTripped ? 98.6 : Math.max(1.8, Math.min(96.4, Number(((100 - score) * 1.12).toFixed(1))));
+      document.getElementById('twinFailProb').textContent = failProb + '%';
+      document.getElementById('twinFailProb').style.color = failProb > 50 ? '#ef4444' : failProb > 20 ? '#f59e0b' : '#10b981';
+
+      let rul = 142;
+      if (currentScenario === 'BEARING_WEAR') rul = Math.max(3, Math.round(120 - (elapsed / 30) * 114));
+      else if (currentScenario === 'DRY_RUN') rul = isTripped ? 0 : 2;
+      else if (currentScenario === 'BLOCKAGE') rul = 28;
+      else if (currentScenario === 'ELECTRICAL_FAULT') rul = 9;
+      document.getElementById('twinRulDays').textContent = rul + ' DAYS';
+      document.getElementById('twinRulDays').style.color = rul < 10 ? '#ef4444' : rul < 30 ? '#f59e0b' : '#38bdf8';
+
+      // 5. Pump Graphic Animation & RPM
+      const rotor = document.getElementById('pumpRotor');
+      const rpmText = document.getElementById('motorRpmText');
+      const pumpRun = document.getElementById('pumpRunBadge');
+      const casing = document.getElementById('pumpCasing');
+      const hub = document.getElementById('pumpHub');
+
+      if (isTripped) {
+        rotor.className = 'pump-rotor';
+        rpmText.textContent = '0 RPM (TRIPPED)';
+        rpmText.style.color = '#ef4444';
+        pumpRun.textContent = 'PUMP: TRIPPED';
+        pumpRun.style.color = '#ef4444';
+        casing.setAttribute('stroke', '#ef4444');
+        hub.setAttribute('fill', '#ef4444');
+      } else {
+        let rpm = 1450;
+        if (currentScenario === 'BEARING_WEAR') rpm = 1410;
+        else if (currentScenario === 'BLOCKAGE') rpm = 1470;
+        else if (currentScenario === 'DRY_RUN') rpm = 1530;
+        else if (currentScenario === 'ELECTRICAL_FAULT') rpm = Math.round(1380 + Math.sin(elapsed) * 110);
+
+        rotor.className = vib > 8 ? 'pump-rotor spinning-fast' : 'pump-rotor spinning';
+        rpmText.textContent = `${rpm.toLocaleString()} RPM · BEP ${Math.max(45, Math.round(94.2 - (100-score)*0.45))}%`;
+        rpmText.style.color = '#38bdf8';
+        pumpRun.textContent = 'PUMP: RUNNING';
+        pumpRun.style.color = '#10b981';
+        casing.setAttribute('stroke', gColor);
+        hub.setAttribute('fill', gColor);
+      }
+
+      // 6. Draw Sparklines & Large Chart
+      drawSparkline('sparkVib', bufVib, 0, 12, statVib === 'critical' ? '#ef4444' : statVib === 'warning' ? '#f59e0b' : '#10b981');
+      drawSparkline('sparkTemp', bufTemp, 20, 95, statTemp === 'critical' ? '#ef4444' : statTemp === 'warning' ? '#f59e0b' : '#10b981');
+      drawSparkline('sparkCurr', bufCurr, 0, 20, statCurr === 'critical' ? '#ef4444' : statCurr === 'warning' ? '#f59e0b' : '#10b981');
+      drawSparkline('sparkPress', bufPress, 0, 7, statPress === 'warning' ? '#f59e0b' : '#10b981');
+      drawSparkline('sparkFlow', bufFlow, 0, 180, statFlow === 'critical' ? '#ef4444' : statFlow === 'warning' ? '#f59e0b' : '#10b981');
+      drawLargeChart();
+    }
+
+    // Main 2-Second Periodic Simulation Loop
+    setInterval(() => {
+      if (!isPlaying) return;
+      elapsed += 2;
+      document.getElementById('simTimerBadge').textContent = `T: ${elapsed}s · ${currentScenario}`;
+
+      if (isTripped) {
+        vib = Math.max(0.05, vib * 0.7);
+        temp = Math.max(30.0, temp - 0.5);
+        curr = 0;
+        press = Math.max(0.1, press * 0.8);
+        flow = 0;
+      } else if (currentScenario === 'NORMAL') {
+        vib = 2.80 + (Math.random() * 0.4 - 0.2);
+        temp = 48.5 + (Math.random() * 0.8 - 0.4);
+        curr = 6.40 + (Math.random() * 0.3 - 0.15);
+        press = 3.20 + (Math.random() * 0.2 - 0.1);
+        flow = 128 + Math.round(Math.random() * 6 - 3);
+      } else if (currentScenario === 'BEARING_WEAR') {
+        const prog = Math.min(1, elapsed / 30);
+        vib = 2.80 + prog * 6.6 + (Math.random() * 0.3 - 0.15);
+        temp = 48.5 + prog * 31.0 + (Math.random() * 0.4 - 0.2);
+        curr = 6.40 + prog * 2.8;
+        if (elapsed === 16) {
+          addAlert('warning', 'High Frequency Harmonics Detected', 'Bearing race spall harmonics detected on ESP32 FFT. Schedule inspection within 7 days.');
+        }
+        if (elapsed === 30) {
+          addAlert('critical', 'Severe Mechanical Degradation', 'Vibration exceeds ISO 10816 Zone D (>8 mm/s). Immediate bearing replacement required.');
+        }
+      } else if (currentScenario === 'DRY_RUN') {
+        flow = 0;
+        press = Math.max(0.2, press * 0.6);
+        curr = 13.2 + (Math.random() * 1.2 - 0.6);
+        temp += 3.8;
+        vib = 7.9 + (Math.random() * 1.2 - 0.6);
+        dryRunCounter += 2;
+
+        if (dryRunCounter >= 5 && !isTripped) {
+          isTripped = true;
+          document.getElementById('dryRunTripBanner').style.display = 'block';
+          addAlert('critical', 'DRY RUN AUTO-SHUTDOWN ACTIVATED', 'Fluid starvation confirmed. Emergency relay opened to protect mechanical seal.');
+        }
+      } else if (currentScenario === 'BLOCKAGE') {
+        press = 5.85 + (Math.random() * 0.3 - 0.15);
+        flow = Math.max(25, 42 + Math.round(Math.random() * 6 - 3));
+        curr = 8.95 + (Math.random() * 0.8 - 0.4);
+        temp = Math.min(68, temp + 0.5);
+        vib = 4.6 + (Math.random() * 0.4 - 0.2);
+        if (elapsed === 10) {
+          addAlert('warning', 'Discharge Blockage Suspected', 'Pressure spike & flow starvation detected. Inspect intake strainer & discharge valve.');
+        }
+      } else if (currentScenario === 'ELECTRICAL_FAULT') {
+        curr = Math.random() > 0.4 ? 14.8 + Math.random() * 2.5 : 6.4;
+        vib = 5.8 + (Math.random() * 1.5 - 0.75);
+        temp = Math.min(76, temp + 0.8);
+        if (elapsed === 8) {
+          addAlert('critical', 'Phase Unbalance / Voltage Drop', 'Current unbalance exceeds 18%. Inspect contactors and VFD output stages.');
+        }
+      }
+
+      // Shift buffers
+      bufVib.shift(); bufVib.push(vib);
+      bufTemp.shift(); bufTemp.push(temp);
+      bufCurr.shift(); bufCurr.push(curr);
+      bufPress.shift(); bufPress.push(press);
+      bufFlow.shift(); bufFlow.push(flow);
+
+      updateUI();
+    }, 2000);
+
+    // Initial render
+    updateUI();
+  </script>
+</body>
+</html>

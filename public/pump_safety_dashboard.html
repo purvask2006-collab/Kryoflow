@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Automated Safety System - Industrial Pump Monitor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0d1117;
+      color: #e6edf3;
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+      padding: 16px;
+      line-height: 1.4;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .header h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      color: #58a6ff;
+    }
+    .grid-container {
+      display: grid;
+      grid-template-columns: 320px 1fr 340px;
+      gap: 16px;
+      flex: 1;
+    }
+    @media (max-width: 1180px) {
+      .grid-container { grid-template-columns: 1fr; }
+    }
+    .panel {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .card {
+      background: #0d1117;
+      border: 1px solid #21262d;
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 10px;
+      transition: all 0.3s;
+    }
+    .card:hover {
+      border-color: #38434f;
+    }
+    .status-badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .lcd {
+      background: linear-gradient(180deg, #092212 0%, #061a0d 100%);
+      border: 4px solid #1f2937;
+      border-radius: 6px;
+      padding: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      color: #34d399;
+      text-shadow: 0 0 8px rgba(52, 211, 153, 0.7);
+      margin: 16px 0;
+      position: relative;
+    }
+    .btn {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 8px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.82rem;
+      font-weight: 600;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .btn:hover { background: #30363d; color: #fff; }
+    .btn:active { transform: translateY(1px); }
+    .btn-red { background: #ff4d4d1a; border-color: #ff4d4d66; color: #ff7b72; }
+    .btn-red:hover { background: #ff4d4d33; color: #fff; }
+    .btn-blue { background: #008cff1a; border-color: #008cff66; color: #58a6ff; }
+    .btn-blue:hover { background: #008cff33; color: #fff; }
+    .led-bar {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      margin: 16px 0;
+      background: #0d1117;
+      padding: 10px 20px;
+      border-radius: 8px;
+      border: 1px solid #21262d;
+    }
+    .led {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.72rem;
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 600;
+    }
+    .led-bulb {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #1c2128;
+      border: 2px solid #30363d;
+      transition: all 0.3s ease;
+    }
+    .led-green.active { background: #00e396; box-shadow: 0 0 16px #00e396; border-color: #a7f3d0; }
+    .led-yellow.active { background: #ffcc00; box-shadow: 0 0 16px #ffcc00; border-color: #fef08a; animation: blinkYellow 1s infinite; }
+    .led-red.active { background: #ff4d4d; box-shadow: 0 0 20px #ff4d4d; border-color: #fecaca; animation: blinkRed 0.4s infinite; }
+    .led-blue.active { background: #008cff; box-shadow: 0 0 16px #008cff; border-color: #bfdbfe; }
+    @keyframes blinkYellow { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    @keyframes blinkRed { 0%, 100% { opacity: 1; transform: scale(1.05); } 50% { opacity: 0.2; transform: scale(0.95); } }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .rotating { animation: spin 1.2s linear infinite; }
+    .rotating-slow { animation: spin 2.5s linear infinite; }
+    .sparkline { width: 100%; height: 28px; display: block; margin-top: 4px; }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header -->
+  <div class="header">
+    <div>
+      <h1>AUTOMATED SAFETY SYSTEM - Real-Time Monitor</h1>
+      <div style="font-size: 0.8rem; color: #8b949e; font-family: 'JetBrains Mono', monospace; margin-top: 2px;">
+        Arduino Uno R3 · 9600 Baud · I2C LCD @ 0x27 · Relay Rig Interfacing Active
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap: 10px;">
+      <div id="stateIndicator" class="status-badge" style="background: rgba(0, 227, 150, 0.15); color: #00e396; border: 1px solid rgba(0, 227, 150, 0.4); font-size: 0.95rem; padding: 6px 14px;">
+        NORMAL
+      </div>
+    </div>
+  </div>
+
+  <div class="grid-container">
+    <!-- LEFT PANEL: 5 Sensor Cards -->
+    <div class="panel">
+      <div style="font-size: 0.78rem; font-weight: 700; color: #8b949e; margin-bottom: 12px; font-family: 'JetBrains Mono'; letter-spacing: 0.05em;">
+        LIVE SENSOR CHANNELS (5)
+      </div>
+
+      <!-- MQ-2 Gas -->
+      <div class="card" id="cardGas">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600; font-size: 0.9rem;">MQ-2 Gas Sensor</div>
+            <div style="font-size: 0.7rem; color: #8b949e; font-family: 'JetBrains Mono';">Pin A0 · Analog 0-500 PPM</div>
+          </div>
+          <span id="gasStatus" class="status-badge" style="background:#00e39622; color:#00e396;">NORMAL</span>
+        </div>
+        <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono'; margin:4px 0;" id="gasVal">
+          85 <span style="font-size:0.85rem; color:#8b949e; font-weight: normal;">PPM</span>
+        </div>
+        <canvas id="sparkGas" class="sparkline" width="280" height="32"></canvas>
+        <div style="font-size:0.7rem; color:#8b949e; margin-top: 2px;">Normal &lt;200 | Warn 200-400 | Crit &gt;400</div>
+      </div>
+
+      <!-- SW-520D Tilt -->
+      <div class="card" id="cardTilt">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600; font-size: 0.9rem;">SW-520D Tilt Sensor</div>
+            <div style="font-size: 0.7rem; color: #8b949e; font-family: 'JetBrains Mono';">Pin A1 · Angle &amp; Vibration</div>
+          </div>
+          <span id="tiltStatus" class="status-badge" style="background:#00e39622; color:#00e396;">NORMAL</span>
+        </div>
+        <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono'; margin:4px 0;" id="tiltVal">
+          3.2 <span style="font-size:0.85rem; color:#8b949e; font-weight: normal;">° DEG</span>
+        </div>
+        <canvas id="sparkTilt" class="sparkline" width="280" height="32"></canvas>
+        <div style="font-size:0.7rem; color:#8b949e; margin-top: 2px;">Normal &lt;15° | Warn 15-25° | Crit &gt;25°</div>
+      </div>
+
+      <!-- Voltage Sensor -->
+      <div class="card" id="cardVolt">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600; font-size: 0.9rem;">Voltage Divider Sensor</div>
+            <div style="font-size: 0.7rem; color: #8b949e; font-family: 'JetBrains Mono';">Pin A2 · DC Bus Rail 0-5V</div>
+          </div>
+          <span id="voltStatus" class="status-badge" style="background:#00e39622; color:#00e396;">NORMAL</span>
+        </div>
+        <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono'; margin:4px 0;" id="voltVal">
+          4.82 <span style="font-size:0.85rem; color:#8b949e; font-weight: normal;">VOLTS</span>
+        </div>
+        <canvas id="sparkVolt" class="sparkline" width="280" height="32"></canvas>
+        <div style="font-size:0.7rem; color:#8b949e; margin-top: 2px;">Normal &gt;4.0V | Warn 3.0-4.0V | Crit &lt;3.0V</div>
+      </div>
+
+      <!-- Water Level -->
+      <div class="card" id="cardWater">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600; font-size: 0.9rem;">Water Level Sensor</div>
+            <div style="font-size: 0.7rem; color: #8b949e; font-family: 'JetBrains Mono';">Pin A3 · Reservoir Level %</div>
+          </div>
+          <span id="waterStatus" class="status-badge" style="background:#00e39622; color:#00e396;">NORMAL</span>
+        </div>
+        <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono'; margin:4px 0;" id="waterVal">
+          62 <span style="font-size:0.85rem; color:#8b949e; font-weight: normal;">% FULL</span>
+        </div>
+        <canvas id="sparkWater" class="sparkline" width="280" height="32"></canvas>
+        <div style="font-size:0.7rem; color:#8b949e; margin-top: 2px;">Normal 30-80% | Warn &gt;90%/&lt;10% | Crit &gt;95%/&lt;5%</div>
+      </div>
+
+      <!-- PIR Intruder -->
+      <div class="card" id="cardPir">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-weight:600; font-size: 0.9rem;">PIR Motion Sensor</div>
+            <div style="font-size: 0.7rem; color: #8b949e; font-family: 'JetBrains Mono';">Pin D3 · Security Perimeter</div>
+          </div>
+          <span id="pirStatus" class="status-badge" style="background:#00e39622; color:#00e396;">CLEAR</span>
+        </div>
+        <div style="font-size:1.75rem; font-weight:700; font-family:'JetBrains Mono'; margin:4px 0;" id="pirVal">
+          SECURE <span style="font-size:0.85rem; color:#8b949e; font-weight: normal;">(0)</span>
+        </div>
+        <canvas id="sparkPir" class="sparkline" width="280" height="32"></canvas>
+        <div style="font-size:0.7rem; color:#8b949e; margin-top: 2px;">0 = None (Safe) | 1 = Intruder (Critical Danger)</div>
+      </div>
+    </div>
+
+    <!-- CENTER PANEL: State Indicator + Pump & Valve Graphics + LCD -->
+    <div class="panel" style="text-align:center; display: flex; flex-direction: column; justify-content: space-between;">
+      <div>
+        <div style="font-size: 0.78rem; font-weight: 700; color: #8b949e; font-family: 'JetBrains Mono'; letter-spacing: 0.05em; margin-bottom: 10px;">
+          SYSTEM STATE &amp; PHYSICAL ACTUATORS
+        </div>
+
+        <!-- Large Circular State Indicator -->
+        <div style="display:inline-block; margin: 10px auto 14px;">
+          <div id="bigStateRing" style="width: 110px; height: 110px; border-radius: 50%; border: 4px solid #00e396; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0d1117; box-shadow: 0 0 24px rgba(0,227,150,0.35); transition: all 0.4s;">
+            <div id="bigStateText" style="font-size: 1rem; font-weight: 800; font-family: 'JetBrains Mono'; color: #00e396;">NORMAL</div>
+            <div style="font-size: 0.65rem; color: #8b949e; font-family: 'JetBrains Mono';">STATE #1</div>
+          </div>
+        </div>
+
+        <div id="actionBanner" style="font-family: 'JetBrains Mono'; font-size: 0.9rem; font-weight: 600; padding: 6px 16px; border-radius: 20px; background: #0d1117; border: 1px solid #30363d; display: inline-block; margin-bottom: 14px;">
+          Pump RUNNING | Valve OPEN
+        </div>
+
+        <!-- Physical Schematics: Centrifugal Pump & Valve -->
+        <div style="display:flex; justify-content:space-around; align-items:center; margin: 10px 0; background: #0d1117; padding: 14px; border-radius: 8px; border: 1px solid #21262d;">
+          <!-- Pump Graphic -->
+          <div>
+            <div style="font-size:0.75rem; color:#8b949e; font-family:'JetBrains Mono'; margin-bottom:6px;">RELAY 1 (D8): PUMP</div>
+            <svg width="110" height="110" viewBox="0 0 100 100" id="pumpSvg">
+              <rect x="0" y="42" width="24" height="20" fill="#1f2937" stroke="#374151" stroke-width="2"/>
+              <rect x="62" y="0" width="20" height="24" fill="#1f2937" stroke="#374151" stroke-width="2"/>
+              <circle cx="50" cy="50" r="42" fill="#111827" stroke="#00e396" stroke-width="4" id="pumpCasing"/>
+              <g id="pumpImpeller" class="rotating" style="transform-origin: 50px 50px;">
+                <circle cx="50" cy="50" r="14" fill="#00e396" id="pumpHub"/>
+                <path d="M50 20 L50 50 M80 50 L50 50 M50 80 L50 50 M20 50 L50 50" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+              </g>
+            </svg>
+            <div style="font-weight:700; font-family:'JetBrains Mono'; font-size:0.85rem; margin-top:6px; color:#00e396;" id="pumpText">PUMP: RUNNING</div>
+          </div>
+
+          <!-- Solenoid Valve Graphic -->
+          <div>
+            <div style="font-size:0.75rem; color:#8b949e; font-family:'JetBrains Mono'; margin-bottom:6px;">RELAY 2 (D9): VALVE</div>
+            <svg width="110" height="110" viewBox="0 0 100 100">
+              <rect x="10" y="38" width="80" height="26" rx="3" fill="#1f2937" stroke="#374151" stroke-width="2"/>
+              <rect x="42" y="16" width="16" height="22" fill="#111827" stroke="#374151" stroke-width="2"/>
+              <rect x="36" y="8" width="28" height="10" rx="2" fill="#00e396" id="actuatorTop"/>
+              <g id="valveGate" style="transform-origin: 50px 51px; transition: transform 0.4s ease;">
+                <circle cx="50" cy="51" r="13" fill="#111827" stroke="#6b7280" stroke-width="2"/>
+                <line x1="39" y1="51" x2="61" y2="51" stroke="#00e396" stroke-width="5" stroke-linecap="round" id="valveBar"/>
+              </g>
+            </svg>
+            <div style="font-weight:700; font-family:'JetBrains Mono'; font-size:0.85rem; margin-top:6px; color:#00e396;" id="valveText">VALVE: OPEN</div>
+          </div>
+        </div>
+
+        <!-- 16x2 Character LCD Simulation -->
+        <div class="lcd">
+          <div style="font-size: 0.65rem; color: #6ee7b7; letter-spacing: 0.1em; opacity: 0.7; margin-bottom: 2px;">HD44780 16x2 LCD I2C 0x27</div>
+          <div id="lcd1" style="font-size: 1.15rem; font-weight:700; letter-spacing: 0.08em;">SYSTEM NORMAL</div>
+          <div id="lcd2" style="font-size: 0.85rem; opacity: 0.85; margin-top: 2px;">ALL SENSORS NOMINAL</div>
+        </div>
+      </div>
+
+      <!-- 4 LED Indicators -->
+      <div class="led-bar">
+        <div class="led">
+          <div id="ledNormal" class="led-bulb led-green active"></div>
+          <span style="color:#00e396;">NORMAL</span>
+        </div>
+        <div class="led">
+          <div id="ledWarn" class="led-bulb led-yellow"></div>
+          <span>WARNING</span>
+        </div>
+        <div class="led">
+          <div id="ledCrit" class="led-bulb led-red"></div>
+          <span>CRITICAL</span>
+        </div>
+        <div class="led">
+          <div id="ledSafe" class="led-bulb led-blue"></div>
+          <span>SAFE_MODE</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT PANEL: Action Log -->
+    <div class="panel" style="display:flex; flex-direction:column;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px;">
+        <div style="font-size: 0.78rem; font-weight: 700; color: #8b949e; font-family: 'JetBrains Mono'; letter-spacing: 0.05em;">
+          ACTION TELEMETRY LOG
+        </div>
+        <button class="btn" style="padding: 3px 8px; font-size: 0.72rem;" onclick="clearLogs()">Clear</button>
+      </div>
+
+      <div id="logBox" style="flex:1; height: 480px; overflow-y:auto; font-family:'JetBrains Mono', monospace; font-size:0.75rem; background:#0d1117; padding:12px; border-radius:6px; border:1px solid #21262d; display: flex; flex-direction: column; gap: 8px;">
+        <div style="color: #00e396;">[BOOT] Arduino Uno initialized. Watchdog armed. Normal mode active.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM PANEL: Control Buttons -->
+  <div class="panel" style="margin-top:16px; display:flex; flex-wrap:wrap; gap:10px; justify-content:center; align-items:center;">
+    <button class="btn" onclick="toggleSim()" id="simBtn">Pause Simulation</button>
+    <button class="btn btn-red" onclick="triggerGas()">Trigger Gas Leak</button>
+    <button class="btn btn-red" onclick="triggerTilt()">Trigger Tilt</button>
+    <button class="btn btn-red" onclick="triggerVoltage()">Trigger Low Volt</button>
+    <button class="btn btn-red" onclick="triggerIntruder()">Trigger Intruder</button>
+    <button class="btn btn-blue" onclick="triggerFault()">Simulate Sensor Fault</button>
+    <button class="btn" style="border-color:#00e39688; color:#00e396;" onclick="resetSys()">Reset System</button>
+    <button class="btn" style="background:#58a6ff22; color:#58a6ff; border-color:#58a6ff66;" onclick="runDemo()" id="demoBtn">Demo Mode</button>
+  </div>
+
+  <script>
+    // State Variables
+    let isRunning = true;
+    let gas = 85, tilt = 3.2, volt = 4.82, water = 62, pir = 0;
+    let fault = false;
+    let demoActive = false;
+    let demoTimer = null;
+    let lastState = 'NORMAL';
+
+    // Histories (20 readings each)
+    const historyGas = Array(20).fill(85);
+    const historyTilt = Array(20).fill(3.2);
+    const historyVolt = Array(20).fill(4.82);
+    const historyWater = Array(20).fill(62);
+    const historyPir = Array(20).fill(0);
+
+    // Audio tone generator using Web Audio API
+    let audioCtx = null;
+    function playBeep(freq = 600, dur = 0.15) {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + dur);
+      } catch(e) {}
+    }
+
+    function addLog(msg, color="#8b949e") {
+      const box = document.getElementById('logBox');
+      const time = new Date().toLocaleTimeString();
+      const div = document.createElement('div');
+      div.style.color = color;
+      div.style.borderBottom = '1px solid rgba(255,255,255,0.05)';
+      div.style.paddingBottom = '4px';
+      div.textContent = `[${time}] ${msg}`;
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    function clearLogs() {
+      document.getElementById('logBox').innerHTML = '';
+      addLog('Log buffer cleared.', '#8b949e');
+    }
+
+    // Sparkline Canvas Renderer
+    function drawSparkline(canvasId, data, min, max, strokeColor) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width, h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      ctx.beginPath();
+      for (let i = 0; i < data.length; i++) {
+        const x = (i / (data.length - 1)) * w;
+        const norm = Math.max(0, Math.min(1, (data[i] - min) / (max - min || 1)));
+        const y = h - (norm * (h - 6)) - 3;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    function updateUI() {
+      // Numbers
+      document.getElementById('gasVal').innerHTML = `${Math.round(gas)} <span style="font-size:0.85rem; color:#8b949e; font-weight:normal;">PPM</span>`;
+      document.getElementById('tiltVal').innerHTML = `${tilt.toFixed(1)} <span style="font-size:0.85rem; color:#8b949e; font-weight:normal;">° DEG</span>`;
+      document.getElementById('voltVal').innerHTML = `${volt.toFixed(2)} <span style="font-size:0.85rem; color:#8b949e; font-weight:normal;">VOLTS</span>`;
+      document.getElementById('waterVal').innerHTML = `${Math.round(water)} <span style="font-size:0.85rem; color:#8b949e; font-weight:normal;">% FULL</span>`;
+      document.getElementById('pirVal').innerHTML = pir === 1 ? `<span style="color:#ff7b72;">INTRUDER!</span> <span style="font-size:0.85rem; color:#ff7b72;">(1)</span>` : `SECURE <span style="font-size:0.85rem; color:#8b949e;">(0)</span>`;
+
+      // Statuses
+      let state = 'NORMAL';
+      if (fault) state = 'SAFE_MODE';
+      else if (pir === 1 || gas > 400 || tilt > 25 || volt < 3.0 || water > 95 || water < 5) state = 'CRITICAL';
+      else if (gas >= 200 || tilt >= 15 || volt < 4.0 || water >= 90 || water <= 10) state = 'WARNING';
+
+      // Sparklines
+      drawSparkline('sparkGas', historyGas, 0, 500, gas > 400 ? '#ff4d4d' : gas >= 200 ? '#ffcc00' : '#00e396');
+      drawSparkline('sparkTilt', historyTilt, 0, 45, tilt > 25 ? '#ff4d4d' : tilt >= 15 ? '#ffcc00' : '#00e396');
+      drawSparkline('sparkVolt', historyVolt, 0, 5, volt < 3.0 ? '#ff4d4d' : volt < 4.0 ? '#ffcc00' : '#00e396');
+      drawSparkline('sparkWater', historyWater, 0, 100, (water > 95 || water < 5) ? '#ff4d4d' : (water >= 90 || water <= 10) ? '#ffcc00' : '#00e396');
+      drawSparkline('sparkPir', historyPir, 0, 1, pir === 1 ? '#ff4d4d' : '#00e396');
+
+      // State UI Elements
+      const stateEl = document.getElementById('stateIndicator');
+      const bigRing = document.getElementById('bigStateRing');
+      const bigText = document.getElementById('bigStateText');
+      const actBanner = document.getElementById('actionBanner');
+      const pumpText = document.getElementById('pumpText');
+      const valveText = document.getElementById('valveText');
+      const pumpImp = document.getElementById('pumpImpeller');
+      const pumpHub = document.getElementById('pumpHub');
+      const pumpCasing = document.getElementById('pumpCasing');
+      const valveBar = document.getElementById('valveBar');
+      const actuatorTop = document.getElementById('actuatorTop');
+      const valveGate = document.getElementById('valveGate');
+      const lcd1 = document.getElementById('lcd1');
+      const lcd2 = document.getElementById('lcd2');
+
+      const ledN = document.getElementById('ledNormal');
+      const ledW = document.getElementById('ledWarn');
+      const ledC = document.getElementById('ledCrit');
+      const ledS = document.getElementById('ledSafe');
+      [ledN, ledW, ledC, ledS].forEach(l => l.className = 'led-bulb');
+
+      if (state === 'NORMAL') {
+        stateEl.textContent = 'NORMAL';
+        stateEl.style.cssText = 'background:#00e39622; color:#00e396; border:1px solid #00e39666; font-size:0.95rem; padding:6px 14px; border-radius:4px;';
+        bigRing.style.borderColor = '#00e396';
+        bigRing.style.boxShadow = '0 0 24px rgba(0,227,150,0.35)';
+        bigText.textContent = 'NORMAL';
+        bigText.style.color = '#00e396';
+        actBanner.textContent = 'Pump RUNNING | Valve OPEN';
+        actBanner.style.color = '#00e396';
+        pumpText.textContent = 'PUMP: RUNNING';
+        pumpText.style.color = '#00e396';
+        valveText.textContent = 'VALVE: OPEN';
+        valveText.style.color = '#00e396';
+        pumpImp.className = 'rotating';
+        pumpHub.setAttribute('fill', '#00e396');
+        pumpCasing.setAttribute('stroke', '#00e396');
+        valveBar.setAttribute('stroke', '#00e396');
+        actuatorTop.setAttribute('fill', '#00e396');
+        valveGate.style.transform = 'rotate(0deg)';
+        lcd1.textContent = 'SYSTEM NORMAL';
+        lcd2.textContent = 'ALL SENSORS NOMINAL';
+        ledN.className = 'led-bulb led-green active';
+      } else if (state === 'WARNING') {
+        stateEl.textContent = 'WARNING';
+        stateEl.style.cssText = 'background:#ffcc0022; color:#ffcc00; border:1px solid #ffcc0066; font-size:0.95rem; padding:6px 14px; border-radius:4px;';
+        bigRing.style.borderColor = '#ffcc00';
+        bigRing.style.boxShadow = '0 0 24px rgba(255,204,0,0.35)';
+        bigText.textContent = 'WARNING';
+        bigText.style.color = '#ffcc00';
+        actBanner.textContent = 'Pump RUNNING | Valve CLOSING';
+        actBanner.style.color = '#ffcc00';
+        pumpText.textContent = 'PUMP: RUNNING';
+        pumpText.style.color = '#ffcc00';
+        valveText.textContent = 'VALVE: CLOSING';
+        valveText.style.color = '#ffcc00';
+        pumpImp.className = 'rotating-slow';
+        pumpHub.setAttribute('fill', '#ffcc00');
+        pumpCasing.setAttribute('stroke', '#ffcc00');
+        valveBar.setAttribute('stroke', '#ffcc00');
+        actuatorTop.setAttribute('fill', '#ffcc00');
+        valveGate.style.transform = 'rotate(45deg)';
+        lcd1.textContent = 'WARNING: CHECK SENSOR';
+        lcd2.textContent = gas >= 200 ? `GAS LEVEL ${Math.round(gas)} PPM` : tilt >= 15 ? `TILT ${tilt.toFixed(1)} DEG` : 'CHECK VOLT/WATER';
+        ledW.className = 'led-bulb led-yellow active';
+      } else if (state === 'CRITICAL') {
+        stateEl.textContent = 'CRITICAL';
+        stateEl.style.cssText = 'background:#ff4d4d22; color:#ff4d4d; border:1px solid #ff4d4d66; font-size:0.95rem; padding:6px 14px; border-radius:4px;';
+        bigRing.style.borderColor = '#ff4d4d';
+        bigRing.style.boxShadow = '0 0 30px rgba(255,77,77,0.5)';
+        bigText.textContent = 'CRITICAL';
+        bigText.style.color = '#ff4d4d';
+        actBanner.textContent = 'Pump STOPPED | Valve CLOSED';
+        actBanner.style.color = '#ff4d4d';
+        pumpText.textContent = 'PUMP: STOPPED';
+        pumpText.style.color = '#ff4d4d';
+        valveText.textContent = 'VALVE: CLOSED';
+        valveText.style.color = '#ff4d4d';
+        pumpImp.className = '';
+        pumpHub.setAttribute('fill', '#ff4d4d');
+        pumpCasing.setAttribute('stroke', '#ff4d4d');
+        valveBar.setAttribute('stroke', '#ff4d4d');
+        actuatorTop.setAttribute('fill', '#ff4d4d');
+        valveGate.style.transform = 'rotate(90deg)';
+        lcd1.textContent = 'CRITICAL: PUMP STOPPED';
+        lcd2.textContent = pir === 1 ? 'INTRUDER DETECTED' : gas > 400 ? 'TOXIC GAS ALARM' : 'EMERGENCY SHUTDOWN';
+        ledC.className = 'led-bulb led-red active';
+      } else {
+        stateEl.textContent = 'SAFE_MODE';
+        stateEl.style.cssText = 'background:#008cff22; color:#008cff; border:1px solid #008cff66; font-size:0.95rem; padding:6px 14px; border-radius:4px;';
+        bigRing.style.borderColor = '#008cff';
+        bigRing.style.boxShadow = '0 0 24px rgba(0,140,255,0.4)';
+        bigText.textContent = 'SAFE_MODE';
+        bigText.style.color = '#008cff';
+        actBanner.textContent = 'Pump ISOLATED | Valve CLOSED';
+        actBanner.style.color = '#008cff';
+        pumpText.textContent = 'PUMP: ISOLATED';
+        pumpText.style.color = '#008cff';
+        valveText.textContent = 'VALVE: CLOSED';
+        valveText.style.color = '#008cff';
+        pumpImp.className = '';
+        pumpHub.setAttribute('fill', '#008cff');
+        pumpCasing.setAttribute('stroke', '#008cff');
+        valveBar.setAttribute('stroke', '#008cff');
+        actuatorTop.setAttribute('fill', '#008cff');
+        valveGate.style.transform = 'rotate(90deg)';
+        lcd1.textContent = 'SAFE MODE: SENSOR FAULT';
+        lcd2.textContent = 'ERR CODE: E-04 TIMEOUT';
+        ledS.className = 'led-bulb led-blue active';
+      }
+
+      // Audio notification on state change
+      if (lastState !== state) {
+        if (state === 'WARNING') playBeep(550, 0.2);
+        else if (state === 'CRITICAL') playBeep(880, 0.35);
+        else if (state === 'SAFE_MODE') playBeep(330, 0.3);
+        else playBeep(660, 0.15);
+        lastState = state;
+      }
+    }
+
+    // 1-Second Periodic Simulation Loop
+    setInterval(() => {
+      if (!isRunning || demoActive) return;
+
+      if (!fault && gas < 200) gas = Math.max(50, Math.min(170, gas + (Math.random() * 8 - 4)));
+      if (tilt < 15) tilt = Math.max(1.0, Math.min(10.0, tilt + (Math.random() * 1.0 - 0.5)));
+      if (volt > 4.0) volt = Math.max(4.6, Math.min(4.98, volt + (Math.random() * 0.06 - 0.03)));
+      if (water >= 30 && water <= 80) water = Math.max(50, Math.min(75, water + (Math.random() * 2 - 1)));
+
+      historyGas.shift(); historyGas.push(gas);
+      historyTilt.shift(); historyTilt.push(tilt);
+      historyVolt.shift(); historyVolt.push(volt);
+      historyWater.shift(); historyWater.push(water);
+      historyPir.shift(); historyPir.push(pir);
+
+      updateUI();
+    }, 1000);
+
+    // Operator Control Actions
+    function toggleSim() {
+      isRunning = !isRunning;
+      document.getElementById('simBtn').textContent = isRunning ? 'Pause Simulation' : 'Resume Simulation';
+    }
+
+    function triggerGas() {
+      if (demoActive) stopDemo();
+      gas = 450; fault = false;
+      historyGas.shift(); historyGas.push(gas);
+      addLog('Gas level rising: 450 PPM [CRITICAL]', '#ff7b72');
+      updateUI();
+    }
+
+    function triggerTilt() {
+      if (demoActive) stopDemo();
+      tilt = 34.0; fault = false;
+      historyTilt.shift(); historyTilt.push(tilt);
+      addLog('Vibration/Tilt limit exceeded: 34° [CRITICAL]', '#ff7b72');
+      updateUI();
+    }
+
+    function triggerVoltage() {
+      if (demoActive) stopDemo();
+      volt = 2.4; fault = false;
+      historyVolt.shift(); historyVolt.push(volt);
+      addLog('Bus brownout detected: 2.40V [CRITICAL]', '#ff7b72');
+      updateUI();
+    }
+
+    function triggerIntruder() {
+      if (demoActive) stopDemo();
+      pir = 1; fault = false;
+      historyPir.shift(); historyPir.push(pir);
+      addLog('PIR Sensor: Intruder detected near pump [CRITICAL]', '#ff7b72');
+      updateUI();
+    }
+
+    function triggerFault() {
+      if (demoActive) stopDemo();
+      fault = true;
+      addLog('Sensor communication bus timeout: SAFE_MODE [E-04]', '#58a6ff');
+      updateUI();
+    }
+
+    function resetSys() {
+      if (demoActive) stopDemo();
+      gas = 85; tilt = 3.2; volt = 4.82; water = 62; pir = 0; fault = false;
+      historyGas.fill(85); historyTilt.fill(3.2); historyVolt.fill(4.82); historyWater.fill(62); historyPir.fill(0);
+      addLog('System master reset: All sensors restored to NORMAL.', '#00e396');
+      updateUI();
+    }
+
+    // Pre-programmed 4-State Demo Mode Sequence
+    function stopDemo() {
+      demoActive = false;
+      clearTimeout(demoTimer);
+      document.getElementById('demoBtn').textContent = 'Demo Mode';
+      document.getElementById('demoBtn').style.background = '#58a6ff22';
+    }
+
+    function runDemo() {
+      if (demoActive) { stopDemo(); resetSys(); return; }
+      demoActive = true;
+      document.getElementById('demoBtn').textContent = 'Stop Demo';
+      document.getElementById('demoBtn').style.background = '#ffcc0033';
+
+      addLog('[DEMO] Step 1/4: NORMAL state (All parameters safe)', '#00e396');
+      gas = 85; tilt = 3.2; volt = 4.82; water = 62; pir = 0; fault = false;
+      updateUI();
+
+      demoTimer = setTimeout(() => {
+        if (!demoActive) return;
+        addLog('[DEMO] Step 2/4: WARNING state (Gas reaches 280 PPM)', '#ffcc00');
+        gas = 280;
+        historyGas.shift(); historyGas.push(gas);
+        updateUI();
+
+        demoTimer = setTimeout(() => {
+          if (!demoActive) return;
+          addLog('[DEMO] Step 3/4: CRITICAL state (Gas spikes to 460 PPM + Intruder tripped)', '#ff7b72');
+          gas = 460; pir = 1;
+          historyGas.shift(); historyGas.push(gas);
+          historyPir.shift(); historyPir.push(pir);
+          updateUI();
+
+          demoTimer = setTimeout(() => {
+            if (!demoActive) return;
+            addLog('[DEMO] Step 4/4: SAFE_MODE state (Simulated sensor wire fault E-04)', '#58a6ff');
+            fault = true;
+            updateUI();
+
+            demoTimer = setTimeout(() => {
+              if (!demoActive) return;
+              addLog('[DEMO] Demo complete. Auto-resetting to NORMAL.', '#00e396');
+              stopDemo();
+              resetSys();
+            }, 4000);
+          }, 4000);
+        }, 4000);
+      }, 4000);
+    }
+
+    // Initial render
+    updateUI();
+  </script>
+</body>
+</html>

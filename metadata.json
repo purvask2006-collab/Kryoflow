@@ -1,0 +1,6 @@
+{
+  "name": "PumpPulse AI - Industrial Pump Condition Monitoring",
+  "description": "IoT-based pump condition monitoring system and digital twin with real-time simulation, edge AI diagnostics, animated architecture, and SCADA telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
